@@ -1,0 +1,15 @@
+[package]
+name = "sepsplit-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = {version = "1.0.133", features = ["derive"]}
+serde-big-array = "0.4.1"
+byteorder = "1.4.3"
+memchr = "2.4.1"
+num = "0.4.0"
+bincode = "1.3.3"
+binrw = "0.8.4"

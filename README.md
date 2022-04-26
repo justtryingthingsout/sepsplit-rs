@@ -8,3 +8,8 @@ Afterwards, run the executable with: `target/release/sepsplit-rs`
 
 # Usage:
 `sepsplit-rs /path/to/sep-firmware.bin [output folder]`
+The SEP firmware has to be decrypted, extracted, and decompressed.
+
+# Credits:
+- xerub for the original sepsplit
+- matteyeux for the 64-bit version and helping me test this

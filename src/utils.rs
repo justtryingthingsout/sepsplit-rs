@@ -1,3 +1,15 @@
+/*
+    This file is built on some assumptions that may be wrong.
+    Namely:
+        - That the SEP HDR struct will not have 3 
+          u64 fields before the rootserver if the 
+          Shared Memory Entry size is 0 (N142b SEP)
+        - That the SEP HDR and SEP App 64-bit structs 
+          will not have memory sizes if the stack size is 0
+          (iOS 13 SEP)
+    If these assumptions are wrong, the code may panic due to the struct fields being off.
+*/
+
 use std::{fmt};
 use serde::{Serialize, Deserialize}; //de::DeserializeOwned
 use serde_big_array::BigArray;
@@ -14,6 +26,13 @@ macro_rules! range_size {
 macro_rules! cast_struct {
     ($t: ty, $arr: expr) => {
         bincode::deserialize::<$t>($arr).unwrap_or_else(|_| panic!("Unable to deserialize to {}", stringify!($t)))
+    }
+}
+
+#[macro_export]
+macro_rules! cast_struct_binread {
+    ($t: ty, $arr: expr) => {
+        Cursor::new($arr).read_le::<$t>().unwrap_or_else(|e| panic!("Unable to deserialize to {}, err: {}", stringify!($t), e))
     }
 }
 
@@ -110,8 +129,11 @@ pub struct SEPDataHDR64 {
         pub stack_base_vaddr: u64,
         pub stack_size: u64,
         //start
+        #[br(if(stack_size != 0, 0))]
         pub mem_size: u64,
+        #[br(if(stack_size != 0, 0))]
         pub antireplay_mem_size: u64,
+        #[br(if(stack_size != 0, 0))]
         pub heap_mem_size: u64,
         //exit
         pub init_name: [u8; 16],
@@ -124,7 +146,7 @@ pub struct SEPDataHDR64 {
     pub n_apps: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(BinRead, Debug)]
 /* right after the above, from offset 0x11c0 */
 /* newest 32 bit SEPOS also uses this */
 pub struct SEPApp64 {
@@ -137,6 +159,7 @@ pub struct SEPApp64 {
     pub stack_size: u64,
     pub mem_size: u64,
     pub non_antireplay_mem_size: u64,
+    #[br(if(stack_size != 0, 0))]
     pub heap_mem_size: u64,
     pub compact_ver_start: u32,
     pub compact_ver_end: u32,
@@ -215,7 +238,7 @@ pub struct Segment64 {
     pub flags: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SymTab {
     pub symoff: u32,
     pub nsyms: u32,

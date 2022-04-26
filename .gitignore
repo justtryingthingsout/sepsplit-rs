@@ -11,11 +11,16 @@ Cargo.lock
 
 
 # Added by cargo
-
 /target
 
-#custom
 
+#custom, added by plx
+
+#testing the program
 sepdump*
+
+#old file, way messier
 /main.rs
+
+#code I didn't think I'd need but kept it here anyways
 /bruh.rs

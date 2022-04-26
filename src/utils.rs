@@ -15,6 +15,9 @@ use serde::{Serialize, Deserialize}; //de::DeserializeOwned
 use serde_big_array::BigArray;
 use binrw::{BinRead};
 
+//utility macros to help make my life easier
+
+//create a range from the start and size
 #[macro_export]
 macro_rules! range_size {
     ($start: expr, $size:expr) => {
@@ -22,6 +25,7 @@ macro_rules! range_size {
     }
 }
 
+//generate a struct from a slice of bytes, using bincode
 #[macro_export]
 macro_rules! cast_struct {
     ($t: ty, $arr: expr) => {
@@ -29,6 +33,7 @@ macro_rules! cast_struct {
     }
 }
 
+//generate a struct from a slice of bytes, using binread
 #[macro_export]
 macro_rules! cast_struct_binread {
     ($t: ty, $arr: expr) => {
@@ -37,14 +42,18 @@ macro_rules! cast_struct_binread {
 }
 
 //structs
-// #[derive(Serialize, Deserialize)]
-// pub struct Legion64 {
-//     pub subversion: u32, //0x3
-//     pub legionstr: [u8; 16],
-//     pub structoff: u16
-//     reserved: [u8; 2]
-// }
-// 
+
+
+/* unused struct
+#[derive(Serialize, Deserialize)]
+ pub struct Legion64 {
+     pub subversion: u32, //0x3
+     pub legionstr: [u8; 16],
+     pub structoff: u16
+     reserved: [u8; 2]
+} 
+*/
+
 #[derive(Serialize, Deserialize)]
 pub struct Legion32 {
     pub subversion: u32, //0x1
@@ -69,7 +78,7 @@ pub struct SEPMonitorBootArgs {
         pub kphys_base: u32,
         pub phys_slide: u32,
         pub virt_slide: u32
-    but actual says: */ 
+    but actual SEP firmware says: */ 
     pub uuid: [u8; 16]
 }
 
@@ -78,29 +87,30 @@ pub struct SEPKernBootArgs {
     version: u16,
     revision: u16,
     zero1: [u32; 3],
-    pub ver: u32, //possible version field
+    ver: u32, //possible version field
     zero2: [u32; 6],
     crc32: u32,
     zero3: u64,
     #[serde(with = "BigArray")]
     unused: [u8; 256]
     /*
-    unused may contain a string on older SEPs, stating:
+    'unused' may contain a string on older SEPs (seen in iOS 10 A10), stating:
     	Firmware magic string
 		Without which, what are these bits?
 		SEP denied.
+    later firmwares do not have this string, and is instead just zeros.
     */
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub enum BootArgsType { //describes space between first fields and name
     A10     = 69, //major 18xx (e.g. iOS 14 A10)
-    //is 69 because it uses the 64-bit struct anyways, first fields are different
+    //is 69 because it uses the 64-bit struct anyways, first fields are different (just a random value, not the actual size)
     A9      = 24, //major 16xx
     A8      = 20, //major 12xx
     //A8Old   = 12, //major 8xx
     A10Old  = 12, //major 6xx
-    OldFW   = 0,  //no version field, uses SEPApp
+    OldFW   = 0,  //no version field, uses SEPAppOld struct
 }
 
 #[derive(BinRead, Debug)]
@@ -128,21 +138,20 @@ pub struct SEPDataHDR64 {
         pub stack_base_paddr: u64,
         pub stack_base_vaddr: u64,
         pub stack_size: u64,
-        //start
+        //these do not exist in iOS 13 SEP
         #[br(if(stack_size != 0, 0))]
         pub mem_size: u64,
         #[br(if(stack_size != 0, 0))]
         pub antireplay_mem_size: u64,
         #[br(if(stack_size != 0, 0))]
         pub heap_mem_size: u64,
-        //exit
         pub init_name: [u8; 16],
         pub init_uuid: [u8; 16],
         pub srcver: SrcVer,
     //rootserver end
     pub crc32: u32,
-    pub coredump_sup: u8, //bool but i don't want invalid values
-    _pad: [u8; 3],
+    pub coredump_sup: u8, //actually bool but I don't want a panic in case it deserializes the wrong bytes
+    _pad: [u8; 3], //u32 alignment
     pub n_apps: u64,
 }
 
@@ -168,9 +177,9 @@ pub struct SEPApp64 {
     pub srcver: SrcVer,
 }
 
-/*
+/* unused struct
 #[derive(Serialize, Deserialize, Debug)]
-/* SEPOS 16xx uses this, atleast for N71m SEP */
+// SEPOS 16xx uses this, atleast for N71m SEP
 pub struct SEPApp32 {
     pub phys_text: u32,
     pub virt_base: u32,
@@ -199,6 +208,8 @@ pub struct SEPAppOld {
     /* char hash[16]; //could also be UUID */
 }
 
+
+//copied from Apple's loader.h
 type VMProt = i32;
 type CPUType = i32;
 type CPUSubtype = i32;
@@ -253,6 +264,7 @@ pub struct SrcVerCmd {
     pub version: SrcVer,	/* A.B.C.D.E packed as a24.b10.c10.d10.e10 */
 }
 
+//type of command in cmd field, not from loader.h
 #[repr(u32)]
 #[derive(PartialEq)]
 pub enum CMD {
@@ -281,18 +293,17 @@ pub static SEG_LINKEDIT: &[u8; 16] = b"__LINKEDIT\0\0\0\0\0\0";
 
 //pub static LEGION_32_SIZE:  usize = 22;
 //pub static LEGION_64_SIZE:  usize = 22;
-pub static SEPHDR_SIZE:     usize = 224;
-pub static SEPAPP_64_SIZE:  usize = 128;
-pub static SEPAPP_SIZE:     usize = 32;
-pub static MACHHEADER_SIZE: usize = 28;
-pub static LOADCOMMAND_SIZE: usize = 8;
-pub static KRNLBOOTARGS_SIZE:  usize = 312;
+pub static SEPHDR_SIZE:       usize = 224;
+pub static SEPAPP_64_SIZE:    usize = 128;
+pub static SEPAPP_SIZE:       usize = 32;
+pub static MACHHEADER_SIZE:   usize = 28;
+pub static LOADCOMMAND_SIZE:  usize = 8;
+pub static KRNLBOOTARGS_SIZE: usize = 312;
 //pub static SEGMENT_SIZE: usize = 64;
 //pub static SEGMENT64_SIZE: usize = 80;
-//machhead, seg, seg64, symt
 
 impl MachHeader {
-    pub fn is_macho(&self) -> bool { self.magic & 0xffff_fffe == 0xfeed_face } //AND with 0x0 ignores 64 bit
+    pub fn is_macho(&self) -> bool { self.magic & 0xffff_fffe == 0xfeed_face } //bitwise AND with 0x0 ignores 64 bit
     pub fn is64(&self) -> bool { self.magic & 0x1 == 1 } // would mean 0xfeed_facf
 }
 
@@ -309,17 +320,17 @@ impl fmt::Display for SrcVer {
 }
 
 impl SrcVer {
-    pub fn get_major(&self) -> u64 {
+    pub fn get_major(&self) -> u64 { //I only really ever use this for version
         &self.0 >> 40
     }
 }
 
 impl TryFrom<u32> for CMD {
-    type Error = ();
+    type Error = (); //either panics or isn't a real error, so () is fine
 
     fn try_from(v: u32) -> Result<Self, Self::Error> {
         if v > 0x2B { panic!("this is not a cmd, value was {:x}", v) }
-        match v {
+        match v { // https://stackoverflow.com/a/57578431
             x if x == CMD::Segment as u32 => Ok(CMD::Segment),
             x if x == CMD::Segment64 as u32 => Ok(CMD::Segment64),
             x if x == CMD::SymTab as u32 => Ok(CMD::SymTab),

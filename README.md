@@ -12,4 +12,5 @@ The SEP firmware has to be decrypted, extracted, and decompressed.
 
 # Credits:
 - xerub for the original sepsplit
-- matteyeux for the 64-bit version and helping me test this
+- matteyeux for helping me test this program
+- mrmacete for the 64-bit version

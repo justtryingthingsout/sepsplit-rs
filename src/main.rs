@@ -264,7 +264,7 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
         }
 
         /*
-            preperation for loop, find offset of "SEPOS" string and 
+            preparation for loop, find offset of "SEPOS" string and 
             calculate size of structs based off "SEPD" string and previous string
         */
         let tailoff = memmem::find(&kernel[sep_info.sep_app_pos..], b"SEPOS       ").unwrap_or_else(|| panic!("Could not find SEPOS string")); //offset of the name in the struct

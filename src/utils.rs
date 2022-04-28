@@ -11,7 +11,7 @@
 */
 
 use std::{fmt};
-use serde::{Serialize, Deserialize}; //de::DeserializeOwned
+use serde::{Serialize, Deserialize};
 use serde_big_array::BigArray;
 use binrw::{BinRead};
 
@@ -264,7 +264,7 @@ pub struct SrcVerCmd {
     pub version: SrcVer,	/* A.B.C.D.E packed as a24.b10.c10.d10.e10 */
 }
 
-//type of command in cmd field, not from loader.h
+//type of command in cmd field
 #[repr(u32)]
 #[derive(PartialEq)]
 pub enum CMD {

@@ -250,7 +250,7 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
 
 
             for i in 2.. {
-                if i != 1 {
+                if i != 2 {
                     app = cast_struct_binread!(SEPApp64, &kernel[sep_info.sep_app_pos..]);
                 }
                 if app.phys_text == 0 { return }

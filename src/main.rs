@@ -157,7 +157,7 @@ fn restore_file(index: usize, buf: &[u8], path: &PathBuf, tail: &str, data_buf: 
             println!("Error in fix_data_segment function: {}", err)
         };
     }
-    fs::write(&file, tmp).unwrap_or_else(|e| panic!("Unable to write to file {}, err: {}", &file.display(), e)); //unused 1st parameter because fs::write does not have a error value
+    fs::write(&file, tmp).unwrap_or_else(|e| panic!("Unable to write to file {}, err: {}", &file.display(), e));
 }
 
 //main function of the program, splits the SEP apps from the file by reading the structs
@@ -249,8 +249,8 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
             app.size_text -= 0x1000;
 
 
-            for i in 1.. {
-                if i != 1 {
+            for i in 2.. {
+                if i != 2 {
                     app = cast_struct_binread!(SEPApp64, &kernel[sep_info.sep_app_pos..]);
                 }
                 if app.phys_text == 0 { return }

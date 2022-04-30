@@ -41,6 +41,14 @@ macro_rules! cast_struct_binread {
     }
 }
 
+//make a str from a slice
+#[macro_export]
+macro_rules! strslice {
+    ($slice: expr, $name:expr) => {
+        str::from_utf8($slice).unwrap_or_else(|e| panic!("Could not convert {var} to utf-8, err: {e}", var=$name)).split_whitespace().next().unwrap()
+    }
+}
+
 //structs
 
 

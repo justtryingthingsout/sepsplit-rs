@@ -10,7 +10,7 @@
     If these assumptions are wrong, the code may panic due to the struct fields being off.
 */
 
-use std::{fmt};
+use std::fmt;
 use serde::{Serialize, Deserialize};
 use serde_big_array::BigArray;
 use binrw::{BinRead};
@@ -46,6 +46,18 @@ macro_rules! cast_struct_binread {
 macro_rules! strslice {
     ($slice: expr, $name:expr) => {
         str::from_utf8($slice).unwrap_or_else(|e| panic!("Could not convert {var} to utf-8, err: {e}", var=$name)).split_whitespace().next().unwrap()
+    }
+}
+
+//write to file with a buffer
+#[macro_export]
+macro_rules! filewrite {
+    ($path: expr, $data: expr) => {
+        std::io::BufWriter::new(File::create($path).unwrap_or_else(|e| 
+            panic!("Unable to create \"{path}\" with err: {e}", path=$path.display())
+        )).write_all($data).unwrap_or_else(|e| 
+            panic!("Unable to write to buffered file \"{path}\" with err: {e}", path=$path.display())
+        )
     }
 }
 

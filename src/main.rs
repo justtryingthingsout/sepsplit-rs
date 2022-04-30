@@ -1,5 +1,5 @@
 use memchr::memmem;
-use std::{fs, str, path::{PathBuf}, env, process::exit, io::Write};
+use std::{fs::{self, File}, str, path::{PathBuf}, env, process::exit, io::Write};
 mod utils;
 use utils::*;
 use binrw::{BinReaderExt, io::Cursor};
@@ -158,7 +158,7 @@ fn restore_file(index: usize, buf: &[u8], path: &PathBuf, tail: &str, data_buf: 
             eprintln!("Error in fix_data_segment function: {err}")
         };
     }
-    fs::write(&file, tmp).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&file.display()));
+    filewrite!(&file, &tmp);
 }
 
 //main function of the program, splits the SEP apps from the file by reading the structs
@@ -177,7 +177,7 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
         
         //first part of image, boot
         let bootout = outdir.join("sepdump00_boot");
-        fs::write(&bootout, &kernel[..hdr.kernel_base_paddr as usize]).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&bootout.display()));
+        filewrite!(&bootout, &kernel[..hdr.kernel_base_paddr as usize]);
         writeln!(&mut outbuf, "boot         size {sz:#x}", sz=hdr.kernel_base_paddr as usize)?;
 
         //second part, kernel
@@ -213,7 +213,7 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
 
         //index 0: boot
         let mut bootout = outdir.join("sepdump00_boot");
-        fs::write(&bootout, &kernel[..0x1000]).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&bootout.display())); 
+        filewrite!(&bootout, &kernel[..0x1000]); 
         writeln!(&mut outbuf, "boot         size 0x1000")?;
 
         //index 1: kernel
@@ -229,7 +229,7 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
             } else {
                 //N71 SEP or newer SEP Firmware
                 bootout = outdir.join("sepdump01_kernel");
-                fs::write(&bootout, &kernel[range_size!(st, 0xe000)]).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&bootout.display())); 
+                filewrite!(&bootout, &kernel[range_size!(st, 0xe000)]);
                 sz = 0xe000;
             }
         } else {
@@ -248,7 +248,7 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
 
             //dump struct from start of kernel
             bootout = outdir.join("sepdump-extra_struct");
-            fs::write(&bootout, &kernel[range_size!(app.phys_text as usize, 0x1000)]).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&bootout.display())); 
+            filewrite!(&bootout, &kernel[range_size!(app.phys_text as usize, 0x1000)]);
             writeln!(&mut outbuf, "struct       size 0x1000")?;
             app.phys_text += 0x1000;
             app.size_text -= 0x1000;
@@ -283,7 +283,7 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
             if apps.phys == 0 { return Ok(()) } //end of structs, nothing else to do
             else if index == 2 { //need SEPOS kernel's offset to dump structs
                 bootout = outdir.join("sepdump-extra_struct");
-                fs::write(&bootout, &kernel[range_size!(apps.phys as usize, 0x1000)]).unwrap_or_else(|e| panic!("Unable to write to file {file}, error: {e}", file=&bootout.display())); 
+                filewrite!(&bootout, &kernel[range_size!(apps.phys as usize, 0x1000)]); 
                 writeln!(&mut outbuf, "struct       size 0x1000")?;
                 apps.phys += 0x1000;
                 apps.size -= 0x1000;

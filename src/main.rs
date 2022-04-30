@@ -1,8 +1,9 @@
 use memchr::memmem;
-use std::{fs, str, path::{PathBuf}, env};
+use std::{fs, str, path::{PathBuf}, env, process::exit};
 mod utils;
 use utils::*;
 use binrw::{BinReaderExt, io::Cursor};
+use uuid::Uuid;
 
 //calculate the end of the Mach-O file, by seeing the last possible offset of all segments
 fn calc_size(bytes: &[u8]) -> usize { 
@@ -13,7 +14,7 @@ fn calc_size(bytes: &[u8]) -> usize {
     let mut tsize = 0;
 
     if !hdr.is_macho() { return 0 }
-    else if hdr.is64() { q += 4; }
+    else if hdr.is64() { q += 4 }
 
     //check segments in mach-o file
     for _ in 0..hdr.ncmds {
@@ -29,7 +30,7 @@ fn calc_size(bytes: &[u8]) -> usize {
                 end = seg.fileoff + seg.filesize;
                 if tsize < end { tsize = end; }
             },
-            _ => {}
+            _ => ()
         }
         q += cmd.cmdsize as usize;
     }
@@ -62,7 +63,7 @@ fn fix_data_segment(image: &mut [u8], data: &[u8]) -> Result<(), String> {
                     image[range_size!(seg.fileoff as usize, data.len())].copy_from_slice(&data);
                 }
             },
-            _ => {}
+            _ => ()
         }
         p += cur_lcmd.cmdsize as usize;
     };
@@ -90,7 +91,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
                 if &seg.segname != SEG_PAGEZERO && min > seg.vmaddr { min = seg.vmaddr; }
             },
-            _ => {}
+            _ => ()
         }
         p += cur_lcmd.cmdsize as usize
     };
@@ -136,7 +137,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
                 let buf = &bincode::serialize(&seg).unwrap();
                 image[range_size!(p+LOADCOMMAND_SIZE, buf.len())].copy_from_slice(buf)
             },
-            _ => {}
+            _ => ()
         }
         p += cur_lcmd.cmdsize as usize
     };
@@ -146,18 +147,18 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
 
 //restores the file's LINKEDIT and optionally DATA segments, and saves using the name
 fn restore_file(index: usize, buf: &[u8], path: &PathBuf, tail: &str, data_buf: Option<&[u8]>) {
-    let file: PathBuf = path.join(format!("sepdump{:02}_{}", index, tail));
+    let file: PathBuf = path.join(format!("sepdump{index:02}_{tail}"));
     
     let mut tmp = buf.to_owned();
     if let Err(err) = fix_linkedit(&mut tmp) {
-        println!("Error in fix_linkedit function: {}", err)
+        println!("Error in fix_linkedit function: {err}")
     }
     if let Some(real_data_buf) = data_buf { 
         if let Err(err) = fix_data_segment(&mut tmp, real_data_buf) {
-            println!("Error in fix_data_segment function: {}", err)
+            println!("Error in fix_data_segment function: {err}")
         };
     }
-    fs::write(&file, tmp).unwrap_or_else(|e| panic!("Unable to write to file {}, err: {}", &file.display(), e));
+    fs::write(&file, tmp).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&file.display()));
 }
 
 //main function of the program, splits the SEP apps from the file by reading the structs
@@ -171,23 +172,21 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
         
         //first part of image, boot
         let bootout = outdir.join("sepdump00_boot");
-        fs::write(&bootout, &kernel[..hdr.kernel_base_paddr as usize]).unwrap_or_else(|e| panic!("Unable to write to file {}, err: {}", &bootout.display(), e));
-        println!("boot         size {:#x}", hdr.kernel_base_paddr as usize);
+        fs::write(&bootout, &kernel[..hdr.kernel_base_paddr as usize]).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&bootout.display()));
+        println!("boot         size {sz:#x}", sz=hdr.kernel_base_paddr as usize);
 
         //second part, kernel
         let mut sz = calc_size(&kernel[hdr.kernel_base_paddr as usize..]);
+        let mut uuid = Uuid::from_bytes_le(hdr.kernel_uuid).hyphenated().to_string();
         restore_file(1, &kernel[range_size!(hdr.kernel_base_paddr as usize, sz)], &outdir, "kernel", None);
-        println!("kernel       size {:#x}", sz);
+        println!("kernel       size {sz:#x}, UUID {uuid}");
 
         //SEPOS aka "rootserver"
-        let mut tail = str::from_utf8(&hdr.init_name)
-                       .unwrap_or_else(|e| panic!("Could not convert name to utf-8, err: {}", e))
-                       .split_whitespace()
-                       .next()
-                       .unwrap(); //get the name of the first image (SEPOS) without spaces
+        let mut tail = strslice!(&hdr.init_name, "init_name"); //get the name of the first image (SEPOS) without spaces;
+        uuid = Uuid::from_bytes_le(hdr.init_uuid).hyphenated().to_string();
         sz = calc_size(&kernel[hdr.init_base_paddr as usize..]);
         restore_file(2, &kernel[range_size!(hdr.init_base_paddr as usize, sz)], &outdir, tail, None);
-        println!("{:-12} size {:#x}", tail, sz as usize);
+        println!("{tail:-12} size {sz:#x}, UUID {uuid}");
 
         //the rest of the apps
         let sepappsize = SEPAPP_64_SIZE 
@@ -196,11 +195,12 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
         let mut app;
         for i in 0..hdr.n_apps as usize {
             app = cast_struct_binread!(SEPApp64, &kernel[off..]);
-            tail = str::from_utf8(&app.app_name).unwrap_or_else(|e| panic!("Could not convert name to utf-8, err: {}", e)).split_whitespace().next().unwrap();
+            tail = strslice!(&app.app_name, "app_name");
             let data_buf = &kernel[range_size!(app.phys_data as usize, app.size_data as usize)].to_owned();
             restore_file(i + 3, &kernel[range_size!(app.phys_text as usize, (app.size_text + app.size_data) as usize)], &outdir, tail, Some(data_buf));
-            println!("{:-12} phys_text {:#x}, virt {:#x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x}",
-                tail, app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry);
+            let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
+            println!("{tail:-12} phys_text {:#x}, virt {:#x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x},\n             UUID {uuid}",
+                app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry);
             off += sepappsize;
         }
     } else if let Some(mut sep_info) = sepinfo {
@@ -208,7 +208,7 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
 
         //index 0: boot
         let mut bootout = outdir.join("sepdump00_boot");
-        fs::write(&bootout, &kernel[..0x1000]).unwrap_or_else(|e| panic!("Unable to write to file {}, err: {}", &bootout.display(), e)); 
+        fs::write(&bootout, &kernel[..0x1000]).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&bootout.display())); 
         println!("boot         size 0x1000");
 
         //index 1: kernel
@@ -224,14 +224,14 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
             } else {
                 //N71 SEP or newer SEP Firmware
                 bootout = outdir.join("sepdump01_kernel");
-                fs::write(&bootout, &kernel[range_size!(st, 0xe000)]).unwrap_or_else(|e| panic!("Unable to write to file {}, err: {}", &bootout.display(), e)); 
+                fs::write(&bootout, &kernel[range_size!(st, 0xe000)]).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&bootout.display())); 
                 sz = 0xe000;
             }
         } else {
             restore_file(1, &kernel[range_size!(st, sz)], &outdir, "kernel", None);
         }
 
-        println!("kernel       size {:#x}", sz);
+        println!("kernel       size {sz:#x}");
 
         //check for newer SEP
         let tmp = cast_struct!(SEPAppOld, &kernel[sep_info.sep_app_pos..]);
@@ -243,8 +243,8 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
 
             //dump struct from start of kernel
             bootout = outdir.join("sepdump-extra_struct");
-            fs::write(&bootout, &kernel[range_size!(app.phys_text as usize, 0x1000)]).unwrap_or_else(|e| panic!("Unable to write to file {}, err: {}", &bootout.display(), e)); 
-            println!("struct       size {:#x}", 0x1000);
+            fs::write(&bootout, &kernel[range_size!(app.phys_text as usize, 0x1000)]).unwrap_or_else(|e| panic!("Unable to write to file {file}, err: {e}", file=&bootout.display())); 
+            println!("struct       size 0x1000");
             app.phys_text += 0x1000;
             app.size_text -= 0x1000;
 
@@ -254,11 +254,12 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
                     app = cast_struct_binread!(SEPApp64, &kernel[sep_info.sep_app_pos..]);
                 }
                 if app.phys_text == 0 { return }
-                tail = str::from_utf8(&app.app_name).unwrap_or_else(|e| panic!("Could not convert name to utf-8, error: {}", e)).split_whitespace().next().unwrap();
+                tail = strslice!(&app.app_name, "app_name");
                 let data_buf = &kernel[range_size!(app.phys_data as usize, app.size_data as usize)].to_owned();
                 restore_file(i, &kernel[range_size!(app.phys_text as usize, (app.size_text + app.size_data) as usize)], &outdir, tail, Some(data_buf));
-                println!("{:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x}",
-                    tail, app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry);
+                let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
+                println!("{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x},\n             UUID {uuid}",
+                    app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry);
                 sep_info.sep_app_pos += sepappsize;
             }
         }
@@ -272,19 +273,20 @@ fn split(hdr_offset: Option<usize>, kernel: &Vec<u8>, outdir: PathBuf, sepinfo: 
 
         for index in 2.. {
             let (tail, mut apps);
-            if sep_info.sep_app_pos == 0 { panic!("SEPApp position is 0!"); }
+            if sep_info.sep_app_pos == 0 { panic!("SEPApp position is 0!") }
             apps = cast_struct!(SEPAppOld, &kernel[sep_info.sep_app_pos..]);
             if apps.phys == 0 { return } //end of structs, nothing else to do
             else if index == 2 { //need SEPOS kernel's offset to dump structs
                 bootout = outdir.join("sepdump-extra_struct");
-                fs::write(&bootout, &kernel[range_size!(apps.phys as usize, 0x1000)]).unwrap_or_else(|e| panic!("Unable to write to file {}, error: {}", &bootout.display(), e)); 
-                println!("struct       size {:#x}", 0x1000);
+                fs::write(&bootout, &kernel[range_size!(apps.phys as usize, 0x1000)]).unwrap_or_else(|e| panic!("Unable to write to file {file}, error: {e}", file=&bootout.display())); 
+                println!("struct       size 0x1000");
                 apps.phys += 0x1000;
                 apps.size -= 0x1000;
             }
-            tail = str::from_utf8(&kernel[range_size!(sep_info.sep_app_pos + tailoff, 12)]).unwrap_or_else(|e| panic!("error when trying to convert to utf-8: {}", e)).split_whitespace().next().unwrap();
-            println!("{:-12} phys {:#08x}, virt {:#x}, size {:#08x}, entry {:#x}", 
-                      tail,  apps.phys,  apps.virt,  apps.size,  apps.entry);
+            tail = strslice!(&kernel[range_size!(sep_info.sep_app_pos + tailoff, 12)], "name");
+            let uuid = Uuid::from_bytes_le(kernel[range_size!(sep_info.sep_app_pos + tailoff + 12, 16)].try_into().unwrap()).hyphenated().to_string();
+            println!("{tail:-12} phys {:#08x}, virt {:#x}, size {:#08x}, entry {:#x},\n             UUID {uuid}", 
+                      apps.phys,  apps.virt,  apps.size,  apps.entry);
             sep_info.sep_app_pos += sep_info.sepapp_size;
             restore_file(index, &kernel[range_size!(apps.phys as usize, apps.size as usize)], &outdir, tail, None);
         }
@@ -305,24 +307,24 @@ fn sep32_structs(krnl: &Vec<u8>) -> SEPinfo {
 fn find_off(krnl: &Vec<u8>) -> u64 { 
     let legionstroff = memmem::find(&krnl[0..8192], b"Built by legion2").unwrap_or_else(|| { 
         eprintln!("[!] Invalid kernel inputted, exiting.");
-        std::process::exit(1)
+        exit(1)
     });
-    u64::from_le_bytes(krnl[range_size!(legionstroff+16, 8)].try_into().unwrap_or_else(|e| panic!("Error trying to get a u64, message: {}", e)))
+    u64::from_le_bytes(krnl[range_size!(legionstroff+16, 8)].try_into().unwrap_or_else(|e| panic!("Error trying to get a u64, message: {e}")))
 }
 
 //test that the kernel is valid, find_off will verify other cases
 fn test_krnl(krnl: &[u8], fw: &String) {
     if &krnl[..2] == &[0x30, 0x83] {
         eprintln!("[!] IMG4 Header detected, please extract the SEP firmware first. Exiting.");
-        std::process::exit(1)
+        exit(1)
     } else if &krnl[8..16] == b"eGirBwRD" {
         eprintln!("[!] LZVN Header detected, please decompress the SEP firmware first.\n\
                   To extract, run these commands (assuming you have lzvn installed):\n\
-                  `dd if={} of=sep.compressed skip=1 bs=65536`\n\
+                  `dd if={fw} of=sep.compressed skip=1 bs=65536`\n\
                   `lzvn -d sep.compressed sep.bin`\n\
                   then run this program again with the decompressed file.\n\
-                  Exiting.", fw);
-        std::process::exit(1)
+                  Exiting.");
+        exit(1)
     }
 }
 
@@ -335,11 +337,11 @@ fn main() {
     if argc < 2 {
         eprintln!("[!] Not enough arguments\n\
                    sepsplit-rs - tool to split SEPOS firmware into its individual modules, by @plzdonthaxme\n\
-                   Usage: {} <SEPOS.bin> [output folder]", &argv[0]);
+                   Usage: {prog} <SEPOS.bin> [output folder]", prog=&argv[0]);
         return
     }
 
-    let krnl: Vec<u8> = fs::read(&argv[1]).unwrap_or_else(|e| panic!("[-] Cannot read kernel, err: {}", e));
+    let krnl: Vec<u8> = fs::read(&argv[1]).unwrap_or_else(|e| panic!("[-] Cannot read kernel, err: {e}"));
     test_krnl(&krnl[..16], &argv[1]);
     let outdir: PathBuf = if argc > 2 {PathBuf::from(&argv[2])} else {env::current_dir().unwrap()}; //if output dir is specified, use it
     let hdr_offset = find_off(&krnl); //will give 0 when 32-bit SEP

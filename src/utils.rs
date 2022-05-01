@@ -29,7 +29,7 @@ macro_rules! range_size {
 #[macro_export]
 macro_rules! cast_struct {
     ($t: ty, $arr: expr) => {
-        bincode::deserialize::<$t>($arr).unwrap_or_else(|_| panic!("Unable to deserialize to {}", stringify!($t)))
+        bincode::deserialize::<$t>($arr).unwrap_or_else(|e| panic!("Unable to deserialize to {}, err: {e}", stringify!($t)))
     }
 }
 
@@ -37,7 +37,7 @@ macro_rules! cast_struct {
 #[macro_export]
 macro_rules! cast_struct_binread {
     ($t: ty, $arr: expr) => {
-        Cursor::new($arr).read_le::<$t>().unwrap_or_else(|e| panic!("Unable to deserialize to {}, err: {}", stringify!($t), e))
+        Cursor::new($arr).read_le::<$t>().unwrap_or_else(|e| panic!("Unable to deserialize to {}, err: {e}", stringify!($t)))
     }
 }
 

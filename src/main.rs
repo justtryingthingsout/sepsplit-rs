@@ -240,6 +240,10 @@ fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf:
     let tmp = cast_struct!(SEPAppOld, &kernel[sep_info.sep_app_pos..]);
     if tmp.size == 0 {
         //64 bit SEP struct in 32 bit SEP
+
+        //number of apps must be valid in this case
+        let n_apps = sep_info.sepapps.unwrap();
+
         let mut app = cast_struct_binread!(SEPApp64, &kernel[sep_info.sep_app_pos..]);
         let sepappsize = SEPAPP_64_SIZE + if app.srcver.get_major() > 1700 { 4 } else { 0 };
         let mut tail;
@@ -251,11 +255,10 @@ fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf:
         app.phys_text += 0x1000;
         app.size_text -= 0x1000;
 
-        for i in 2.. {
+        for i in 2..n_apps {
             if i != 2 {
                 app = cast_struct_binread!(SEPApp64, &kernel[sep_info.sep_app_pos..]);
             }
-            if app.phys_text == 0 { return outbuf.flush() }
             tail = strslice!(&app.app_name, "app_name");
             let data_buf = &kernel[range_size!(app.phys_data as usize, app.size_data as usize)].to_owned();
             restore_file(i, &kernel[range_size!(app.phys_text as usize, (app.size_text + app.size_data) as usize)], &outdir, tail, Some(data_buf));
@@ -264,6 +267,7 @@ fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf:
                 app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry)?;
             sep_info.sep_app_pos += sepappsize;
         }
+        return outbuf.flush()
     } else { //older SEP
         /*
             preparation for loop, find offset of "SEPOS" string and 
@@ -299,9 +303,11 @@ fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf:
 fn sep32_structs(krnl: &Vec<u8>) -> SEPinfo {
     let legionstr = cast_struct!(Legion32, &krnl[0x400..]);
     let monitorstr = cast_struct!(SEPMonitorBootArgs, &krnl[legionstr.off as usize..]);
+    let krnlbastr = cast_struct!(SEPKernBootArgs, &krnl[monitorstr.args_off as usize..]);
     SEPinfo {
         sep_app_pos: (monitorstr.args_off as usize + KRNLBOOTARGS_SIZE), 
         sepapp_size: SEPAPP_SIZE.to_owned(),
+        sepapps: if krnlbastr.num_apps > 0xFF { None } else { Some(krnlbastr.num_apps as usize) },
     }
 }
 

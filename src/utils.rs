@@ -104,17 +104,25 @@ pub struct SEPMonitorBootArgs {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SEPKernBootArgs {
-    version: u16,
     revision: u16,
-    zero1: [u32; 3],
-    ver: u32, //possible version field
-    zero2: [u32; 6],
-    crc32: u32,
-    zero3: u64,
+    version: u16,
+    virt_base: u32,
+    phys_base: u32,
+    mem_size: u32,
+    top_of_kernel_data: u32,
+    shm_base: u64,
+    smh_size: u32,
+    reserved: [u32; 3],
+    sepos_crc32: u32,
+    seprom_args_offset: u32,
+    seprom_phys_offset: u32,
+    entropy: [u64; 2],
+    pub num_apps: u32,
+    num_shlibs: u32,
     #[serde(with = "BigArray")]
-    unused: [u8; 256]
+    unused: [u8; 232],
     /*
-    'unused' may contain a string on older SEPs (seen in iOS 10 A10), stating:
+    on older SEPs (seen in iOS 10 A10) from 'entropy' until the end of "unused', there may be a string, stating:
     	Firmware magic string
 		Without which, what are these bits?
 		SEP denied.
@@ -172,7 +180,8 @@ pub struct SEPDataHDR64 {
     pub crc32: u32,
     pub coredump_sup: u8, //actually bool but I don't want a panic in case it deserializes the wrong bytes
     _pad: [u8; 3], //u32 alignment
-    pub n_apps: u64,
+    pub n_apps: u32,
+    pub n_shlibs: u32,
 }
 
 #[derive(BinRead, Debug)]
@@ -304,6 +313,7 @@ pub struct LoadCommand {
 pub struct SEPinfo {
     pub sep_app_pos: usize,
     pub sepapp_size: usize,
+    pub sepapps: Option<usize>
 }
 
 

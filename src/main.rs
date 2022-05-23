@@ -1,5 +1,12 @@
 use memchr::memmem;
-use std::{fs::{self, File}, str, path::{PathBuf}, env, process::exit, io::{Write, BufWriter, StdoutLock}};
+use std::{
+    fs::{self, File}, 
+    str, 
+    path::{Path, PathBuf}, 
+    env, 
+    process::exit, 
+    io::{Write, BufWriter, StdoutLock}
+};
 mod utils;
 use utils::*;
 use binrw::{BinReaderExt, io::Cursor};
@@ -8,7 +15,7 @@ use uuid::Uuid;
 //calculate the end of the Mach-O file, by seeing the last possible offset of all segments
 fn calc_size(bytes: &[u8]) -> usize { 
     if bytes.len() < 1024 { return 0 }
-    let hdr = cast_struct!(MachHeader, &bytes);
+    let hdr = cast_struct!(MachHeader, bytes);
     let mut q = MACHHEADER_SIZE;
     let mut end: u64;
     let mut tsize = 0;
@@ -44,7 +51,7 @@ fn calc_size(bytes: &[u8]) -> usize {
 fn fix_data_segment(image: &mut [u8], data: &[u8]) -> Result<(), String> {
     let mut p = MACHHEADER_SIZE;
     
-    let machheader = cast_struct!(MachHeader, &image);
+    let machheader = cast_struct!(MachHeader, image);
     if !machheader.is_macho() { return Err(String::from("Not macho")) }
     else if machheader.is64() { p += 4; }
 
@@ -54,13 +61,13 @@ fn fix_data_segment(image: &mut [u8], data: &[u8]) -> Result<(), String> {
             Ok(CMD::Segment) => {
                 let seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
                 if &seg.segname == SEG_DATA {
-                    image[range_size!(seg.fileoff as usize, data.len())].copy_from_slice(&data);
+                    image[range_size!(seg.fileoff as usize, data.len())].copy_from_slice(data);
                 }
             }
             Ok(CMD::Segment64) => {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
                 if &seg.segname == SEG_DATA {
-                    image[range_size!(seg.fileoff as usize, data.len())].copy_from_slice(&data);
+                    image[range_size!(seg.fileoff as usize, data.len())].copy_from_slice(data);
                 }
             },
             _ => ()
@@ -146,8 +153,8 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
 }
 
 //restores the file's LINKEDIT and optionally DATA segments, and saves using the name
-fn restore_file(index: usize, buf: &[u8], path: &PathBuf, tail: &str, data_buf: Option<&[u8]>) {
-    let file: PathBuf = path.join(format!("sepdump{index:02}_{tail}"));
+fn restore_file(index: usize, buf: &[u8], path: &Path, tail: &str, data_buf: Option<&[u8]>) {
+    let file: &Path = &path.join(format!("sepdump{index:02}_{tail}"));
     
     let mut tmp = buf.to_owned();
     if let Err(err) = fix_linkedit(&mut tmp) {
@@ -158,11 +165,11 @@ fn restore_file(index: usize, buf: &[u8], path: &PathBuf, tail: &str, data_buf: 
             eprintln!("Error in fix_data_segment function: {err}")
         };
     }
-    filewrite!(&file, &tmp);
+    filewrite!(file, &tmp);
 }
 
 //splits the SEP apps from the 64-bit SEP Firmware by reading the structs
-fn split64(hdr_offset: usize, kernel: &Vec<u8>, outdir: PathBuf, mut outbuf: BufWriter<StdoutLock>) -> Result<(), std::io::Error> {
+fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWriter<StdoutLock>) -> Result<(), std::io::Error> {
     writeln!(&mut outbuf, "detected 64 bit SEP")?;
     let hdr = cast_struct_binread!(SEPDataHDR64, &kernel[hdr_offset..]);
     let mut off = hdr_offset + SEPHDR_SIZE 
@@ -177,14 +184,14 @@ fn split64(hdr_offset: usize, kernel: &Vec<u8>, outdir: PathBuf, mut outbuf: Buf
     //second part, kernel
     let mut sz = calc_size(&kernel[hdr.kernel_base_paddr as usize..]);
     let mut uuid = Uuid::from_bytes_le(hdr.kernel_uuid).hyphenated().to_string();
-    restore_file(1, &kernel[range_size!(hdr.kernel_base_paddr as usize, sz)], &outdir, "kernel", None);
+    restore_file(1, &kernel[range_size!(hdr.kernel_base_paddr as usize, sz)], outdir, "kernel", None);
     writeln!(&mut outbuf, "kernel       size {sz:#x}, UUID {uuid}")?;
 
     //SEPOS aka "rootserver"
     let mut tail = strslice!(&hdr.init_name, "init_name"); //get the name of the first image (SEPOS) without spaces;
     uuid = Uuid::from_bytes_le(hdr.init_uuid).hyphenated().to_string();
     sz = calc_size(&kernel[hdr.init_base_paddr as usize..]);
-    restore_file(2, &kernel[range_size!(hdr.init_base_paddr as usize, sz)], &outdir, tail, None);
+    restore_file(2, &kernel[range_size!(hdr.init_base_paddr as usize, sz)], outdir, tail, None);
     writeln!(&mut outbuf, "{tail:-12} size {sz:#x}, UUID {uuid}")?;
 
     //the rest of the apps
@@ -196,7 +203,7 @@ fn split64(hdr_offset: usize, kernel: &Vec<u8>, outdir: PathBuf, mut outbuf: Buf
         app = cast_struct_binread!(SEPApp64, &kernel[off..]);
         tail = strslice!(&app.app_name, "app_name");
         let data_buf = &kernel[range_size!(app.phys_data as usize, app.size_data as usize)].to_owned();
-        restore_file(i + 3, &kernel[range_size!(app.phys_text as usize, (app.size_text + app.size_data) as usize)], &outdir, tail, Some(data_buf));
+        restore_file(i + 3, &kernel[range_size!(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf));
         let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
         writeln!(&mut outbuf, "{tail:-12} phys_text {:#x}, virt {:#x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x},\n             UUID {uuid}",
             app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry)?;
@@ -206,7 +213,7 @@ fn split64(hdr_offset: usize, kernel: &Vec<u8>, outdir: PathBuf, mut outbuf: Buf
 }
 
 //splits the SEP apps from the 32-bit SEP Firmware by reading the structs
-fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf: BufWriter<StdoutLock>) -> Result<(), std::io::Error> {
+fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufWriter<StdoutLock>) -> Result<(), std::io::Error> {
     writeln!(&mut outbuf, "detected 32 bit SEP")?;
 
     //index 0: boot
@@ -219,11 +226,11 @@ fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf:
     let mut sz = calc_size(&kernel[st..]); //most SEP fws
     
     if sz == 0 {
-        if &kernel[range_size!(st, 4)] == &[0; 4] {
+        if kernel[range_size!(st, 4)] == [0; 4] {
             //J97 SEP Firmware
             st = 0x4000;
             sz = calc_size(&kernel[st..]); 
-            restore_file(1, &kernel[range_size!(st, sz)], &outdir, "kernel", None);
+            restore_file(1, &kernel[range_size!(st, sz)], outdir, "kernel", None);
         } else {
             //N71 SEP or newer SEP Firmware
             bootout = outdir.join("sepdump01_kernel");
@@ -231,7 +238,7 @@ fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf:
             sz = 0xe000;
         }
     } else {
-        restore_file(1, &kernel[range_size!(st, sz)], &outdir, "kernel", None);
+        restore_file(1, &kernel[range_size!(st, sz)], outdir, "kernel", None);
     }
 
     writeln!(&mut outbuf, "kernel       size {sz:#x}")?;
@@ -261,7 +268,7 @@ fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf:
             }
             tail = strslice!(&app.app_name, "app_name");
             let data_buf = &kernel[range_size!(app.phys_data as usize, app.size_data as usize)].to_owned();
-            restore_file(i, &kernel[range_size!(app.phys_text as usize, (app.size_text + app.size_data) as usize)], &outdir, tail, Some(data_buf));
+            restore_file(i, &kernel[range_size!(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf));
             let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
             writeln!(&mut outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x},\n             UUID {uuid}",
                 app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry)?;
@@ -280,8 +287,9 @@ fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf:
             let (tail, mut apps);
             if sep_info.sep_app_pos == 0 { panic!("SEPApp position is 0!") }
             apps = cast_struct!(SEPAppOld, &kernel[sep_info.sep_app_pos..]);
-            if apps.phys == 0 { return outbuf.flush() } //end of structs, nothing else to do
-            else if index == 2 { //need SEPOS kernel's offset to dump structs
+            if apps.phys == 0 { //end of structs, nothing else to do
+                return outbuf.flush() 
+            } else if index == 2 { //need SEPOS kernel's offset to dump structs
                 bootout = outdir.join("sepdump-extra_struct");
                 filewrite!(&bootout, &kernel[range_size!(apps.phys as usize, 0x1000)]); 
                 writeln!(&mut outbuf, "struct       size 0x1000")?;
@@ -293,14 +301,14 @@ fn split32(kernel: &Vec<u8>, outdir: PathBuf, mut sep_info: SEPinfo, mut outbuf:
             writeln!(&mut outbuf, "{tail:-12} phys {:#08x}, virt {:#x}, size {:#08x}, entry {:#x},\n             UUID {uuid}", 
                       apps.phys,  apps.virt,  apps.size,  apps.entry)?;
             sep_info.sep_app_pos += sep_info.sepapp_size;
-            restore_file(index, &kernel[range_size!(apps.phys as usize, apps.size as usize)], &outdir, tail, None);
+            restore_file(index, &kernel[range_size!(apps.phys as usize, apps.size as usize)], outdir, tail, None);
         }
     }
     outbuf.flush()
 }
 
 //gets the position of the SEPApp struct and a temporary SEPApp size, using structs in the SEP
-fn sep32_structs(krnl: &Vec<u8>) -> SEPinfo {
+fn sep32_structs(krnl: &[u8]) -> SEPinfo {
     let legionstr = cast_struct!(Legion32, &krnl[0x400..]);
     let monitorstr = cast_struct!(SEPMonitorBootArgs, &krnl[legionstr.off as usize..]);
     let krnlbastr = cast_struct!(SEPKernBootArgs, &krnl[monitorstr.args_off as usize..]);
@@ -312,7 +320,7 @@ fn sep32_structs(krnl: &Vec<u8>) -> SEPinfo {
 }
 
 //find the offset of the SEP HDR struct for 64-bit
-fn find_off(krnl: &Vec<u8>) -> u64 { 
+fn find_off(krnl: &[u8]) -> u64 { 
     let legionstroff = memmem::find(&krnl[0..8192], b"Built by legion2").unwrap_or_else(|| { 
         eprintln!("[!] Invalid kernel inputted, exiting.");
         exit(1)
@@ -322,7 +330,7 @@ fn find_off(krnl: &Vec<u8>) -> u64 {
 
 //test that the kernel is valid, find_off will verify other cases
 fn test_krnl(krnl: &[u8], fw: &String) {
-    if &krnl[..2] == &[0x30, 0x83] {
+    if krnl[..2] == [0x30, 0x83] {
         eprintln!("[!] IMG4 Header detected, please extract the SEP firmware first. Exiting.");
         exit(1)
     } else if &krnl[8..16] == b"eGirBwRD" {
@@ -351,7 +359,11 @@ fn main() -> Result<(), std::io::Error> {
 
     let krnl: Vec<u8> = fs::read(&argv[1]).unwrap_or_else(|e| panic!("[-] Cannot read kernel, err: {e}"));
     test_krnl(&krnl[..16], &argv[1]);
-    let outdir: PathBuf = if argc > 2 {PathBuf::from(&argv[2])} else {env::current_dir().unwrap()}; //if output dir is specified, use it
+    let outdir = &if argc > 2 {
+        PathBuf::from(&argv[2])
+    } else {
+        env::current_dir().unwrap_or_else(|e| panic!("Cannot get current dir: {e}")) //if output dir is specified, use it
+    };
     let hdr_offset = find_off(&krnl); //will give 0 when 32-bit SEP
     
     //fast stdout

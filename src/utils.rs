@@ -145,7 +145,7 @@ pub struct SEPKernBootArgs {
     seprom_phys_offset: u32,
     entropy: [u64; 2],
     pub num_apps: u32,
-    num_shlibs: u32,
+    pub num_shlibs: u32,
     #[serde(with = "BigArray")]
     unused: [u8; 232],
     /*
@@ -362,7 +362,8 @@ pub struct LoadCommand {
 pub struct SEPinfo {
     pub sep_app_pos: usize,
     pub sepapp_size: usize,
-    pub sepapps: Option<usize>
+    pub sepapps: Option<usize>,
+    pub shlibs: Option<usize>
 }
 
 

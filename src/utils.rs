@@ -157,7 +157,7 @@ pub struct SEPKernBootArgs {
     */
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum BootArgsType { //describes space between first fields and name
     A10     = 69, //major 18xx (e.g. iOS 14 A10)
     //is 69 because it uses the 64-bit struct anyways, first fields are different (just a random value, not the actual size)
@@ -344,7 +344,7 @@ pub struct SrcVerCmd {
 
 //type of command in cmd field
 #[repr(u32)]
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum CMD {
     Segment = 0x1,
     Segment64 = 0x19,
@@ -358,7 +358,7 @@ pub struct LoadCommand {
     pub cmdsize: u32
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SEPinfo {
     pub sep_app_pos: usize,
     pub sepapp_size: usize,

@@ -65,7 +65,7 @@ fn fix_data_segment(image: &mut [u8], data: &[u8], dataoff: Option<usize>) -> Re
                         Some(a) => a,
                         None => seg.fileoff as usize,
                     };
-                    image[range_size!(segoff, data.len())].copy_from_slice(&data);
+                    image[range_size!(segoff, data.len())].copy_from_slice(data);
                 }
             }
             Ok(CMD::Segment64) => {
@@ -75,7 +75,7 @@ fn fix_data_segment(image: &mut [u8], data: &[u8], dataoff: Option<usize>) -> Re
                         Some(a) => a,
                         None => seg.fileoff as usize,
                     };
-                    image[range_size!(segoff, data.len())].copy_from_slice(&data);
+                    image[range_size!(segoff, data.len())].copy_from_slice(data);
                 }
             },
             _ => ()

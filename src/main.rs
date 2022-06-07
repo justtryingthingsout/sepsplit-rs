@@ -193,7 +193,8 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
     let mut sz = calc_size(&kernel[hdr.kernel_base_paddr as usize..]);
     let mut uuid = Uuid::from_bytes_le(hdr.kernel_uuid).hyphenated().to_string();
     if sz == 0 {
-        filewrite!(&bootout, &kernel[hdr.kernel_base_paddr as usize..hdr.kernel_max_paddr as usize]);
+        filewrite!(outdir.join("sepdump01_kernel"), &kernel[hdr.kernel_base_paddr as usize..hdr.kernel_max_paddr as usize]);
+        sz = (hdr.kernel_max_paddr - hdr.kernel_base_paddr) as usize;
     } else {
         restore_file(1, &kernel[range_size!(hdr.kernel_base_paddr as usize, sz)], outdir, "kernel", None, None);
     }
@@ -213,7 +214,6 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
                          if hdr.srcver.get_major() > 2000 { 36 } else { 4 }
                        } else { 0 }; //similar to reasons as top of utils.rs
     let mut app;
-    dbg!(off, sepappsize);
     let mut i = 0;
     while i < hdr.n_apps as usize {
         app = cast_struct_args!(SEPApp64, &kernel[off..], (ver, ));

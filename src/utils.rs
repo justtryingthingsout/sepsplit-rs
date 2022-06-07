@@ -13,7 +13,7 @@
 use std::fmt;
 use serde::{Serialize, Deserialize};
 use serde_big_array::BigArray;
-use binrw::{BinRead};
+use binrw::BinRead;
 
 //utility macros to help make my life easier
 
@@ -41,6 +41,21 @@ macro_rules! cast_struct_binread {
     }
 }
 
+//generate a struct from a slice of bytes with imported arguments, using binrw
+#[macro_export]
+macro_rules! cast_struct_args {
+    ($t: ty, $arr: expr, $args: expr) => {
+        <$t>::read_args(&mut Cursor::new($arr), $args)
+        .unwrap_or_else(|e|
+            panic!(
+                "Unable to deserialize to {}, err: {e}, first 4 bytes: {bytes:x?}", 
+                stringify!($t), 
+                bytes=&$arr[0..4]
+            )
+        )
+    }
+}
+
 //make a str from a slice
 #[macro_export]
 macro_rules! strslice {
@@ -63,16 +78,28 @@ macro_rules! filewrite {
 
 //structs
 
-
-/* unused struct
 #[derive(Serialize, Deserialize)]
  pub struct Legion64 {
-     pub subversion: u32, //0x3
+     unk1: u64,
+     uuidtext: [u8; 4],
+     unk2: u64,
+     unk3: u32,
+     pub uuid: [u8; 16],
+     unk4: u64,
+     unk5: u64,
+     pub subversion: u32, //0x4
      pub legionstr: [u8; 16],
-     pub structoff: u16
+     pub structoff: u16,
      reserved: [u8; 2]
 } 
-*/
+
+#[derive(Serialize, Deserialize)]
+ pub struct Legion64Old {
+     pub subversion: u32, //0x3
+     pub legionstr: [u8; 16],
+     pub structoff: u16,
+     reserved: [u8; 2]
+} 
 
 #[derive(Serialize, Deserialize)]
 pub struct Legion32 {
@@ -118,7 +145,7 @@ pub struct SEPKernBootArgs {
     seprom_phys_offset: u32,
     entropy: [u64; 2],
     pub num_apps: u32,
-    num_shlibs: u32,
+    pub num_shlibs: u32,
     #[serde(with = "BigArray")]
     unused: [u8; 232],
     /*
@@ -130,7 +157,7 @@ pub struct SEPKernBootArgs {
     */
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum BootArgsType { //describes space between first fields and name
     A10     = 69, //major 18xx (e.g. iOS 14 A10)
     //is 69 because it uses the 64-bit struct anyways, first fields are different (just a random value, not the actual size)
@@ -142,6 +169,7 @@ pub enum BootArgsType { //describes space between first fields and name
 }
 
 #[derive(BinRead, Debug)]
+#[br(import(ver: u8))]
 pub struct SEPDataHDR64 {
     pub kernel_uuid: [u8; 16],
     pub kernel_heap_size: u64,
@@ -150,14 +178,16 @@ pub struct SEPDataHDR64 {
     pub app_images_base_paddr: u64,
     pub app_images_max_paddr: u64,
     pub paddr_max: u64, /* size of SEP firmware image */
-    pub tz_min_size: u64,
-    pub shm_base: u64,
-    pub shm_size: u64,
+    pub tz0_min_size: u64,
+    pub tz1_min_size: u64,
+    pub ar_min_size: u64,
     //these do not exist in SEP < 1800
-    #[br(if(shm_size != 0, 0))]
-    _unknown1: u64,
-    #[br(if(shm_size != 0, [0, 0]))]
-    _unknown2: [u64; 2],
+    #[br(if(ar_min_size != 0 || ver == 4, 0))]
+    pub non_ar_min_size: u64,
+    #[br(if(ar_min_size != 0 || ver == 4, 0))]
+    pub shm_base: u64,
+    #[br(if(ar_min_size != 0 || ver == 4, 0))]
+    pub shm_size: u64,
     //rootserver start
         pub init_base_paddr: u64,
         pub init_base_vaddr: u64,
@@ -167,12 +197,22 @@ pub struct SEPDataHDR64 {
         pub stack_base_vaddr: u64,
         pub stack_size: u64,
         //these do not exist in iOS 13 SEP
-        #[br(if(stack_size != 0, 0))]
+        #[br(if(stack_size != 0 || ver == 4, 0))]
         pub mem_size: u64,
-        #[br(if(stack_size != 0, 0))]
+        #[br(if(stack_size != 0 || ver == 4, 0))]
         pub antireplay_mem_size: u64,
-        #[br(if(stack_size != 0, 0))]
+        #[br(if(stack_size != 0 || ver == 4, 0))]
         pub heap_mem_size: u64,
+        #[br(if(ver == 4))]
+        pub compact_ver_start: u32,
+        #[br(if(ver == 4))]
+        pub compact_ver_end: u32,
+        #[br(if(ver == 4))]
+        _unk1: u64,
+        #[br(if(ver == 4))]
+        _unk2: u64,
+        #[br(if(ver == 4))]
+        _unk3: u64,
         pub init_name: [u8; 16],
         pub init_uuid: [u8; 16],
         pub srcver: SrcVer,
@@ -185,6 +225,7 @@ pub struct SEPDataHDR64 {
 }
 
 #[derive(BinRead, Debug)]
+#[br(import(ver: u8))]
 /* right after the above, from offset 0x11c0 */
 /* newest 32 bit SEPOS also uses this */
 pub struct SEPApp64 {
@@ -197,8 +238,16 @@ pub struct SEPApp64 {
     pub stack_size: u64,
     pub mem_size: u64,
     pub non_antireplay_mem_size: u64,
-    #[br(if(stack_size != 0, 0))]
+    #[br(if(stack_size != 0 || ver == 4, 0))]
     pub heap_mem_size: u64,
+    #[br(if(ver == 4, 0))]
+    _unk1: u64,
+    #[br(if(ver == 4, 0))]
+    _unk2: u64,
+    #[br(if(ver == 4, 0))]
+    _unk3: u64,
+    #[br(if(ver == 4, 0))]
+    _unk4: u64,
     pub compact_ver_start: u32,
     pub compact_ver_end: u32,
     pub app_name: [u8; 16],
@@ -266,7 +315,7 @@ pub struct Segment {
     pub flags: u32
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Segment64 {
     pub segname: [u8; 16],
     pub vmaddr: u64,
@@ -295,7 +344,7 @@ pub struct SrcVerCmd {
 
 //type of command in cmd field
 #[repr(u32)]
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum CMD {
     Segment = 0x1,
     Segment64 = 0x19,
@@ -309,11 +358,12 @@ pub struct LoadCommand {
     pub cmdsize: u32
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SEPinfo {
     pub sep_app_pos: usize,
     pub sepapp_size: usize,
-    pub sepapps: Option<usize>
+    pub sepapps: Option<usize>,
+    pub shlibs: Option<usize>
 }
 
 
@@ -359,7 +409,7 @@ impl TryFrom<u32> for CMD {
     type Error = (); //either panics or isn't a real error, so () is fine
 
     fn try_from(v: u32) -> Result<Self, Self::Error> {
-        if v > 0x2B { panic!("this is not a cmd, value was {:x}", v) }
+        if v & !(1 << 31) & !(1 << 27) > 0x100 { panic!("this is not a cmd, value was {:#x}", v) }
         match v { // https://stackoverflow.com/a/57578431
             x if x == CMD::Segment as u32 => Ok(CMD::Segment),
             x if x == CMD::Segment64 as u32 => Ok(CMD::Segment64),

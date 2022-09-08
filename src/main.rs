@@ -180,7 +180,7 @@ fn restore_file(index: usize, buf: &[u8], path: &Path, tail: &str, data_buf: Opt
 fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWriter<StdoutLock>, ver: u8) -> Result<(), std::io::Error> {
     writeln!(&mut outbuf, "detected 64 bit SEP")?;
     let hdr = cast_struct_args!(SEPDataHDR64, &kernel[hdr_offset..], (ver, ));
-    let mut off = hdr_offset + SEPHDR_SIZE 
+    let mut off = hdr_offset + SEPHDR_SIZE
                     + if ver == 4 { 56 } else if hdr.ar_min_size == 0 { 0 } else { 24 } //see top of utils.rs file
                     - if hdr.stack_size == 0 && ver != 4 { 24 } else { 0 };
     
@@ -373,15 +373,16 @@ fn sep32_structs(krnl: &[u8]) -> SEPinfo {
     }
 }
 
+fn check_zero_block(krnl: &[u8]) -> &[u8] {
+    if &krnl[range_size!(0x17FF8, 8)] == &((0x00000000E0E00101 as u64).to_be_bytes() as [u8; 8]) {
+        return &krnl[0x18000..];
+    }
+    return &krnl
+}
+
 //find the offset of the SEP HDR struct for 64-bit
 fn find_off(krnl: &[u8]) -> (u64, u8) { 
-    if &krnl[range_size!(0x19004, 16)] == b"Built by legion2" { 
-        //iOS 14(a11)
-        let hdr = cast_struct!(Legion64Old, &krnl[0x19000..]);
-        let mut structoff = hdr.structoff as u64;
-        structoff  += 0x18000;
-        (structoff as u64, hdr.subversion as u8)
-    } else if &krnl[range_size!(0x1004, 16)] == b"Built by legion2" { 
+    if &krnl[range_size!(0x1004, 16)] == b"Built by legion2" {
         //iOS 15 and below
         let hdr = cast_struct!(Legion64Old, &krnl[0x1000..]);
         (hdr.structoff as u64, hdr.subversion as u8)
@@ -429,13 +430,14 @@ fn main() -> Result<(), std::io::Error> {
         exit(1)
     }
 
-    let krnl: Vec<u8> = fs::read(&argv[1]).unwrap_or_else(|e| panic!("[-] Cannot read kernel, err: {e}"));
+    let mut krnl: Vec<u8> = fs::read(&argv[1]).unwrap_or_else(|e| panic!("[-] Cannot read kernel, err: {e}"));
     test_krnl(&krnl[..16], &argv[1]);
     let outdir = &if argc > 2 {
         PathBuf::from(&argv[2])
     } else {
         env::current_dir().unwrap_or_else(|e| panic!("Cannot get current dir: {e}")) //if output dir is specified, use it
     };
+    krnl = check_zero_block(&krnl).to_vec();
     let (hdr_offset, ver) = find_off(&krnl);
     
     //fast stdout

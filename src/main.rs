@@ -375,7 +375,11 @@ fn sep32_structs(krnl: &[u8]) -> SEPinfo {
 
 //find the offset of the SEP HDR struct for 64-bit
 fn find_off(krnl: &[u8]) -> (u64, u8) { 
-    if &krnl[range_size!(0x1004, 16)] == b"Built by legion2" { 
+    if &krnl[range_size!(0x19004, 16)] == b"Built by legion2" { 
+        //iOS 14(a11)
+        let hdr = cast_struct!(Legion64Old, &krnl[0x1000..]);
+        (hdr.structoff as u64, hdr.subversion as u8)
+    } else if &krnl[range_size!(0x1004, 16)] == b"Built by legion2" { 
         //iOS 15 and below
         let hdr = cast_struct!(Legion64Old, &krnl[0x1000..]);
         (hdr.structoff as u64, hdr.subversion as u8)

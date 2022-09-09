@@ -1,4 +1,8 @@
 #![feature(stmt_expr_attributes)]
+#![feature(register_tool)]
+#![register_tool(c2rust)]
+#![feature(type_ascription)]
+#![feature(core_intrinsics)]
 
 use memchr::memmem;
 use std::{
@@ -10,14 +14,12 @@ use std::{
     io::{Write, BufWriter, StdoutLock}
 };
 mod utils;
+mod lzvn;
+
 use utils::*;
 use binrw::{io::Cursor, BinRead};
 use uuid::Uuid;
 
-mod bindings {
-    #![allow(warnings)]
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
 
 //calculate the end of the Mach-O file, by seeing the last possible offset of all segments
 fn calc_size(bytes: &[u8]) -> usize { 
@@ -397,7 +399,6 @@ fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
         eprintln!("[!] IMG4 Header detected, please extract the SEP firmware first. Exiting.");
         process::exit(1)
     } else if &krnl[8..16] == b"eGirBwRD" { //LZVN compression
-        use bindings::*;
         let start = if krnl[range_size!(0x10000, 4)] == [0,0,0,0] { 0x20000 } else { 0x10000 };
         let startptr = krnl[start..].as_ptr() as *const std::ffi::c_void;
         let startlen: u64 = (krnl.len() - start) as u64;
@@ -408,7 +409,7 @@ fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
 
         loop {
             unsafe {
-                let complen = lzvn_decode(destptr, destlen, startptr, startlen);
+                let complen = lzvn::lzvn_decode(destptr, destlen, startptr, startlen);
                 assert_ne!(complen, 0, "decompression errored (truncated input?)");
                 if complen < destlen {
                     destbuf.resize(complen as usize, 0);

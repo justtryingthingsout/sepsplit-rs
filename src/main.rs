@@ -445,6 +445,7 @@ fn main() -> Result<(), std::io::Error> {
     } else {
         env::current_dir().unwrap_or_else(|e| panic!("Cannot get current dir: {e}")) //if output dir is specified, use it
     };
+    fs::create_dir_all(outdir).unwrap_or_else(|e| panic!("Failed to create folder(s): {e}"));
     let (hdr_offset, ver) = find_off(&krnl);
     
     //fast stdout

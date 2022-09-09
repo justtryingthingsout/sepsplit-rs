@@ -1,16 +1,23 @@
+#![feature(stmt_expr_attributes)]
+
 use memchr::memmem;
 use std::{
     fs::{self, File}, 
     str, 
     path::{Path, PathBuf}, 
     env, 
-    process::exit, 
+    process, 
     io::{Write, BufWriter, StdoutLock}
 };
 mod utils;
 use utils::*;
 use binrw::{io::Cursor, BinRead};
 use uuid::Uuid;
+
+mod bindings {
+    #![allow(warnings)]
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
 
 //calculate the end of the Mach-O file, by seeing the last possible offset of all segments
 fn calc_size(bytes: &[u8]) -> usize { 
@@ -60,21 +67,15 @@ fn fix_data_segment(image: &mut [u8], data: &[u8], dataoff: Option<usize>) -> Re
         match cur_lcmd.cmd.try_into() {
             Ok(CMD::Segment) => {
                 let seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
-                if &seg.segname == SEG_DATA {
-                    let segoff = match dataoff {
-                        Some(a) => a,
-                        None => seg.fileoff as usize,
-                    };
+                if seg.segname == SEG_DATA {
+                    let segoff = dataoff.unwrap_or(seg.fileoff as usize);
                     image[range_size!(segoff, data.len())].copy_from_slice(data);
                 }
             }
             Ok(CMD::Segment64) => {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
-                if &seg.segname == SEG_DATA {
-                    let segoff = match dataoff {
-                        Some(a) => a,
-                        None => seg.fileoff as usize,
-                    };
+                if seg.segname == SEG_DATA {
+                    let segoff = dataoff.unwrap_or(seg.fileoff as usize);
                     image[range_size!(segoff, data.len())].copy_from_slice(data);
                 }
             },
@@ -100,11 +101,11 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
         match cur_lcmd.cmd.try_into() {
             Ok(CMD::Segment) => {
                 let seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
-                if &seg.segname != SEG_PAGEZERO && min > seg.vmaddr as u64 { min = seg.vmaddr as u64; }
+                if seg.segname != SEG_PAGEZERO && min > seg.vmaddr as u64 { min = seg.vmaddr as u64; }
             },
             Ok(CMD::Segment64) => {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
-                if &seg.segname != SEG_PAGEZERO && min > seg.vmaddr { min = seg.vmaddr; }
+                if seg.segname != SEG_PAGEZERO && min > seg.vmaddr { min = seg.vmaddr; }
             },
             _ => ()
         }
@@ -119,7 +120,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
         match cur_lcmd.cmd.try_into() {
             Ok(CMD::Segment) => {
                 let mut seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
-                if &seg.segname == SEG_LINKEDIT  {
+                if seg.segname == SEG_LINKEDIT  {
                     delta = seg.vmaddr as u64 - min - seg.fileoff as u64;
                     seg.fileoff += delta as u32;
                 }
@@ -128,7 +129,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
             },
             Ok(CMD::Segment64) => {
                 let mut seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
-                if &seg.segname == SEG_LINKEDIT  { 
+                if seg.segname == SEG_LINKEDIT  { 
                     delta = seg.vmaddr - min - seg.fileoff;
                     seg.fileoff += delta;
                 }
@@ -279,11 +280,7 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
 
         //number of apps must be valid in this case
         let n_apps = sep_info.sepapps.unwrap();
-        let shlib = if let Some(shlib) = sep_info.shlibs {
-            shlib
-        } else {
-            0
-        };
+        let shlib = sep_info.shlibs.unwrap_or(0);
 
         let mut app = cast_struct_args!(SEPApp64, &kernel[sep_info.sep_app_pos..], (if shlib != 0 { 4 } else { 0 }, ));
         let sepappsize = SEPAPP_64_SIZE + if app.srcver.get_major() > 1700 { 
@@ -390,24 +387,40 @@ fn find_off(krnl: &[u8]) -> (u64, u8) {
         (hdr.off as u64, hdr.subversion as u8)
     } else {
         eprintln!("[!] Invalid or unknown kernel inputted, exiting.");
-        exit(1)
+        process::exit(1)
     }
 }
 
 //test that the kernel is valid, find_off will verify other cases
-fn test_krnl(krnl: &[u8], fw: &String) {
+fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
     if krnl[..2] == [0x30, 0x83] {
         eprintln!("[!] IMG4 Header detected, please extract the SEP firmware first. Exiting.");
-        exit(1)
-    } else if &krnl[8..16] == b"eGirBwRD" {
-        eprintln!("[!] LZVN Header detected, please decompress the SEP firmware first.\n\
-                  To extract, run these commands (assuming you have lzvn installed):\n\
-                  `dd if={fw} of=sep.compressed skip=1 bs=65536`\n\
-                  `lzvn -d sep.compressed sep.bin`\n\
-                  then run this program again with the decompressed file.\n\
-                  Exiting.");
-        exit(1)
+        process::exit(1)
+    } else if &krnl[8..16] == b"eGirBwRD" { //LZVN compression
+        use bindings::*;
+        let start = if krnl[range_size!(0x10000, 4)] == [0,0,0,0] { 0x20000 } else { 0x10000 };
+        let startptr = krnl[start..].as_ptr() as *const std::ffi::c_void;
+        let startlen: u64 = (krnl.len() - start) as u64;
+
+        let mut destlen = u32::from_le_bytes(krnl[range_size!(0x18, 4)].try_into().unwrap()) as u64;
+        let mut destbuf: Vec<u8> = vec![0; destlen as usize];
+        let destptr = destbuf.as_mut_ptr() as *mut std::ffi::c_void;
+
+        loop {
+            unsafe {
+                let complen = lzvn_decode(destptr, destlen, startptr, startlen);
+                assert_ne!(complen, 0, "decompression errored (truncated input?)");
+                if complen < destlen {
+                    destbuf.resize(complen as usize, 0);
+                    break;
+                }
+                destlen *= 2; //the SEP firmware may have lied to us about the decompressed size
+                destbuf.resize(destlen as usize, 0);
+            }
+        }
+        return Some(destbuf);
     }
+    None
 }
 
 
@@ -420,11 +433,13 @@ fn main() -> Result<(), std::io::Error> {
         eprintln!("[!] Not enough arguments\n\
                    sepsplit-rs - tool to split SEPOS firmware into its individual modules, by @plzdonthaxme\n\
                    Usage: {prog} <SEPOS.bin> [output folder]", prog=&argv[0]);
-        exit(1)
+        process::exit(1)
     }
 
-    let krnl: Vec<u8> = fs::read(&argv[1]).unwrap_or_else(|e| panic!("[-] Cannot read kernel, err: {e}"));
-    test_krnl(&krnl[..16], &argv[1]);
+    let mut krnl: Vec<u8> = fs::read(&argv[1]).unwrap_or_else(|e| panic!("[-] Cannot read kernel, err: {e}"));
+    if let Some(newkrnl) = test_krnl(&krnl) {
+        krnl = newkrnl;
+    }
     let outdir = &if argc > 2 {
         PathBuf::from(&argv[2])
     } else {

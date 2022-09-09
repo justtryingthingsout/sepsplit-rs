@@ -367,9 +367,9 @@ pub struct SEPinfo {
 }
 
 
-pub static SEG_DATA:     &[u8; 16] = b"__DATA\0\0\0\0\0\0\0\0\0\0";
-pub static SEG_PAGEZERO: &[u8; 16] = b"__PAGEZERO\0\0\0\0\0\0";
-pub static SEG_LINKEDIT: &[u8; 16] = b"__LINKEDIT\0\0\0\0\0\0";
+pub static SEG_DATA:     [u8; 16] = *b"__DATA\0\0\0\0\0\0\0\0\0\0";
+pub static SEG_PAGEZERO: [u8; 16] = *b"__PAGEZERO\0\0\0\0\0\0";
+pub static SEG_LINKEDIT: [u8; 16] = *b"__LINKEDIT\0\0\0\0\0\0";
 
 //pub static LEGION_32_SIZE:  usize = 22;
 //pub static LEGION_64_SIZE:  usize = 22;

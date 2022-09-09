@@ -1,0 +1,3 @@
+[submodule "src/ext/lzvn"]
+	path = src/ext/lzvn
+	url = https://github.com/xerub/LZVN.git

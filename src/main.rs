@@ -12,6 +12,9 @@ use utils::*;
 use binrw::{io::Cursor, BinRead};
 use uuid::Uuid;
 
+#[cfg(test)]
+mod tests;
+
 #[allow(warnings)]
 mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));

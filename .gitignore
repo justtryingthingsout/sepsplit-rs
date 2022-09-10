@@ -15,3 +15,7 @@ Cargo.lock
 #custom, added by plx
 **/.DS_Store
 .vscode
+
+#can't add these due to copyright, but have included script to download all of them
+testfws/** 
+!testfws/.gitkeep

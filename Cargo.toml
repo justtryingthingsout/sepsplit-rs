@@ -19,3 +19,7 @@ uuid = "1.0.0"
 [build-dependencies]
 bindgen = "0.60.1"
 cc = "1.0.73"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+test-case = "2.2.1"

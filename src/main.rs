@@ -1,5 +1,3 @@
-#![feature(stmt_expr_attributes)]
-
 use memchr::memmem;
 use std::{
     fs::{self, File}, 
@@ -14,8 +12,8 @@ use utils::*;
 use binrw::{io::Cursor, BinRead};
 use uuid::Uuid;
 
+#[allow(warnings)]
 mod bindings {
-    #![allow(warnings)]
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
@@ -410,7 +408,7 @@ fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
             unsafe {
                 let complen = lzvn_decode(destptr, destlen, startptr, startlen);
                 assert_ne!(complen, 0, "decompression errored (truncated input?)");
-                if complen < destlen {
+                if complen < destlen + 1 { //can't do <= because lzvn_decode returns that on truntucated out as well
                     destbuf.resize(complen as usize, 0);
                     break;
                 }

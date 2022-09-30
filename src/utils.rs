@@ -9,35 +9,22 @@
           (iOS 13 SEP)
     If these assumptions are wrong, the code may panic due to the struct fields being off.
 */
+use binrw::{BinRead, binrw};
 
-use std::fmt;
-use serde::{Serialize, Deserialize};
-use serde_big_array::BigArray;
-use binrw::BinRead;
-
-//utility macros to help make my life easier
-
-//create a range from the start and size
-#[macro_export]
-macro_rules! range_size {
-    ($start: expr, $size:expr) => {
-        $start..$start+$size
-    }
-}
-
-//generate a struct from a slice of bytes, using bincode
-#[macro_export]
-macro_rules! cast_struct {
-    ($t: ty, $arr: expr) => {
-        bincode::deserialize::<$t>($arr).unwrap_or_else(|e| panic!("Unable to deserialize to {}, err: {e}", stringify!($t)))
-    }
-}
+//utility macros/functions to help make my life easier
 
 //generate a struct from a slice of bytes, using binread
 #[macro_export]
-macro_rules! cast_struct_binread {
+macro_rules! cast_struct {
     ($t: ty, $arr: expr) => {
-        Cursor::new($arr).read_le::<$t>().unwrap_or_else(|e| panic!("Unable to deserialize to {}, err: {e}", stringify!($t)))
+        Cursor::new(&$arr).read_le::<$t>().unwrap_or_else(|e| panic!("Unable to deserialize to {}, err: {e}", stringify!($t)))
+    }
+}
+
+#[macro_export]
+macro_rules! write_struct {
+    ($str: expr, $arr: expr) => {
+        Cursor::new(&mut $arr).write_le(&$str).unwrap_or_else(|e| panic!("Unable to serialize {}, err: {e}", stringify!($str)))
     }
 }
 
@@ -45,7 +32,7 @@ macro_rules! cast_struct_binread {
 #[macro_export]
 macro_rules! cast_struct_args {
     ($t: ty, $arr: expr, $args: expr) => {
-        <$t>::read_args(&mut Cursor::new($arr), $args)
+        <$t>::read_le_args(&mut Cursor::new($arr), $args)
         .unwrap_or_else(|e|
             panic!(
                 "Unable to deserialize to {}, err: {e}, first 4 bytes: {bytes:x?}", 
@@ -56,62 +43,96 @@ macro_rules! cast_struct_args {
     }
 }
 
+//create a range from the start and size
+pub const fn range_size(start: usize, size: usize) -> std::ops::Range<usize> {
+    start..start+size
+}
+
 //make a str from a slice
-#[macro_export]
-macro_rules! strslice {
-    ($slice: expr, $name:expr) => {
-        str::from_utf8($slice).unwrap_or_else(|e| panic!("Could not convert {var} to utf-8, err: {e}", var=$name)).split_whitespace().next().unwrap()
-    }
+pub fn strslice(slice: &[u8]) -> &str {
+    std::str::from_utf8(slice).unwrap_or_else(|e| 
+        panic!("Could not convert slice to utf-8, err: {e}")
+    ).split_whitespace().next().unwrap()
 }
 
 //write to file with a buffer
-#[macro_export]
-macro_rules! filewrite {
-    ($path: expr, $data: expr) => {
-        std::io::BufWriter::new(File::create($path).unwrap_or_else(|e| 
-            panic!("Unable to create \"{path}\" with err: {e}", path=$path.display())
-        )).write_all($data).unwrap_or_else(|e| 
-            panic!("Unable to write to buffered file \"{path}\" with err: {e}", path=$path.display())
-        )
-    }
+pub fn filewrite(path: &std::path::Path, data: &[u8]) {
+    use std::io::Write;
+    std::io::BufWriter::new(std::fs::File::create(path).unwrap_or_else(|e| 
+        panic!("Unable to create \"{path}\" with err: {e}", path=path.display())
+    )).write_all(data).unwrap_or_else(|e| 
+        panic!("Unable to write to buffered file \"{path}\" with err: {e}", path=path.display())
+    );
 }
 
 //structs
 
-#[derive(Serialize, Deserialize)]
+#[derive(BinRead)]
  pub struct Legion64 {
-     unk1: u64,
-     uuidtext: [u8; 4],
-     unk2: u64,
-     unk3: u32,
-     pub uuid: [u8; 16],
-     unk4: u64,
-     unk5: u64,
-     pub subversion: u32, //0x4
-     pub legionstr: [u8; 16],
-     pub structoff: u16,
-     reserved: [u8; 2]
+    _unk1: u64,
+    _uuidtext: [u8; 4],
+    _unk2: u64,
+    _unk3: u32,
+    pub uuid: [u8; 16],
+    _unk4: u64,
+    _unk5: u64,
+    pub subversion: u32, //0x4
+    pub legionstr: [u8; 16],
+    pub structoff: u16,
+    _reserved: [u8; 2]
 } 
 
-#[derive(Serialize, Deserialize)]
+#[derive(BinRead)]
  pub struct Legion64Old {
-     pub subversion: u32, //0x3
-     pub legionstr: [u8; 16],
-     pub structoff: u16,
-     reserved: [u8; 2]
+    pub subversion: u32, //0x3
+    pub legionstr: [u8; 16],
+    pub structoff: u16,
+    _reserved: [u8; 2]
 } 
 
-#[derive(Serialize, Deserialize)]
+#[derive(BinRead)]
 pub struct Legion32 {
     pub subversion: u32, //0x1
     pub off: u32, //0x800
     pub legionstr: [u8; 16]
 }
 
-#[derive(BinRead, Serialize, Deserialize, Debug, Clone, Copy)]
-pub struct SrcVer(u64);
+//all of the below allows are due to macro generated code
+#[allow(
+    dead_code, 
+    clippy::map_unwrap_or, 
+    clippy::no_effect_underscore_binding, 
+    clippy::cast_lossless
+)]
+mod srcver { //in a module to be able to apply allow attribute
+    use modular_bitfield::prelude::*;
+    use ::binrw::BinRead;
+    use std::fmt;
+    
+    #[bitfield(bits = 64)]
+    #[derive(BinRead, Debug, Clone, Copy)]
+    #[br(map = Self::from_bytes)]
+    pub struct SrcVer {
+        patch3: B10,
+        patch2: B10,
+        patch1: B10,
+        minor: B10,
+        major: B24,
+    }
+    impl SrcVer {
+        pub fn get_major(self) -> u32 { self.major() }
+    }
+    
+    impl fmt::Display for SrcVer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}.{}.{}.{}.{}", self.major(), self.minor(), self.patch1(), self.patch2(), self.patch3())
+        }
+    }
+}
 
-#[derive(Serialize, Deserialize, Debug)]
+use srcver::SrcVer;
+
+#[derive(BinRead, Debug)]
 pub struct SEPMonitorBootArgs {
     //monitor related
     pub version: u32,
@@ -129,25 +150,24 @@ pub struct SEPMonitorBootArgs {
     pub uuid: [u8; 16]
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(BinRead, Debug)]
 pub struct SEPKernBootArgs {
-    revision: u16,
-    version: u16,
-    virt_base: u32,
-    phys_base: u32,
-    mem_size: u32,
-    top_of_kernel_data: u32,
-    shm_base: u64,
-    smh_size: u32,
-    reserved: [u32; 3],
-    sepos_crc32: u32,
-    seprom_args_offset: u32,
-    seprom_phys_offset: u32,
-    entropy: [u64; 2],
+    _revision: u16,
+    _version: u16,
+    _virt_base: u32,
+    _phys_base: u32,
+    _mem_size: u32,
+    _top_of_kernel_data: u32,
+    _shm_base: u64,
+    _smh_size: u32,
+    _reserved: [u32; 3],
+    _sepos_crc32: u32,
+    _seprom_args_offset: u32,
+    _seprom_phys_offset: u32,
+    _entropy: [u64; 2],
     pub num_apps: u32,
     pub num_shlibs: u32,
-    #[serde(with = "BigArray")]
-    unused: [u8; 232],
+    _unused: [u8; 232],
     /*
     on older SEPs (seen in iOS 10 A10) from 'entropy' until the end of "unused', there may be a string, stating:
     	Firmware magic string
@@ -157,7 +177,8 @@ pub struct SEPKernBootArgs {
     */
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(BinRead, Debug, PartialEq, Eq)]
+#[br(repr = u8)]
 pub enum BootArgsType { //describes space between first fields and name
     A10     = 69, //major 18xx (e.g. iOS 14 A10)
     //is 69 because it uses the 64-bit struct anyways, first fields are different (just a random value, not the actual size)
@@ -256,7 +277,7 @@ pub struct SEPApp64 {
 }
 
 /* unused struct
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(BinRead, Debug)]
 // SEPOS 16xx uses this, atleast for N71m SEP
 pub struct SEPApp32 {
     pub phys_text: u32,
@@ -275,7 +296,7 @@ pub struct SEPApp32 {
 }
 */
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(BinRead, Debug)]
 /* first version of SEPOS bootargs */
 pub struct SEPAppOld {
     pub phys: u64,
@@ -292,7 +313,7 @@ type VMProt = i32;
 type CPUType = i32;
 type CPUSubtype = i32;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(BinRead, Debug)]
 pub struct MachHeader {
     pub magic: u32,
     pub cputype: CPUType,
@@ -303,7 +324,8 @@ pub struct MachHeader {
     pub flags: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[binrw]
+#[derive(Debug)]
 pub struct Segment {
     pub segname: [u8; 16],
     pub vmaddr: u32,
@@ -315,7 +337,8 @@ pub struct Segment {
     pub flags: u32
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[binrw]
+#[derive(Debug)]
 pub struct Segment64 {
     pub segname: [u8; 16],
     pub vmaddr: u64,
@@ -327,7 +350,8 @@ pub struct Segment64 {
     pub flags: u32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[binrw]
+#[derive(Debug)]
 pub struct SymTab {
     pub symoff: u32,
     pub nsyms: u32,
@@ -335,7 +359,7 @@ pub struct SymTab {
     pub strsize: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(BinRead)]
 pub struct SrcVerCmd {
     pub cmd: u32,	        /* LC_SOURCE_VERSION */
     pub cmdsize: u32,	    /* 16 */
@@ -352,7 +376,7 @@ pub enum CMD {
     SourceVersion = 0x2A,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(BinRead, Debug)]
 pub struct LoadCommand {
     pub cmd: u32,
     pub cmdsize: u32
@@ -383,38 +407,22 @@ pub static KRNLBOOTARGS_SIZE: usize = 312;
 //pub static SEGMENT64_SIZE: usize = 80;
 
 impl MachHeader {
-    pub fn is_macho(&self) -> bool { self.magic & 0xffff_fffe == 0xfeed_face } //bitwise AND with 0x0 ignores 64 bit
-    pub fn is64(&self) -> bool { self.magic & 0x1 == 1 } // would mean 0xfeed_facf
+    pub const fn is_macho(&self) -> bool { self.magic & 0xffff_fffe == 0xfeed_face } //bitwise AND with 0x0 ignores 64 bit
+    pub const fn is64(&self) -> bool { self.magic & 0x1 == 1 } // would mean 0xfeed_facf
 }
 
-impl fmt::Display for SrcVer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let num = self.0 as u64;
-        let major = num >> 40;
-        let minor = num >> 30 & 0x3ff;
-        let patch1 = num >> 20 & 0x3ff;
-        let patch2 = num >> 10 & 0x3ff;
-        let patch3 = num & 0x3ff;
-        write!(f, "{}.{}.{}.{}.{}", major, minor, patch1, patch2, patch3)
-    }
-}
 
-impl SrcVer {
-    pub fn get_major(&self) -> u64 { //I only really ever use this for version
-        &self.0 >> 40
-    }
-}
 
 impl TryFrom<u32> for CMD {
     type Error = (); //either panics or isn't a real error, so () is fine
 
     fn try_from(v: u32) -> Result<Self, Self::Error> {
-        if v & !(1 << 31) & !(1 << 27) > 0x100 { panic!("this is not a cmd, value was {:#x}", v) }
+        assert!(v & !(1 << 31) & !(1 << 27) <= 0x100, "this is not a cmd, value was {:#x}", v);
         match v { // https://stackoverflow.com/a/57578431
-            x if x == CMD::Segment as u32 => Ok(CMD::Segment),
-            x if x == CMD::Segment64 as u32 => Ok(CMD::Segment64),
-            x if x == CMD::SymTab as u32 => Ok(CMD::SymTab),
-            x if x == CMD::SourceVersion as u32 => Ok(CMD::SourceVersion),
+            x if x == Self::Segment       as u32 => Ok(Self::Segment),
+            x if x == Self::Segment64     as u32 => Ok(Self::Segment64),
+            x if x == Self::SymTab        as u32 => Ok(Self::SymTab),
+            x if x == Self::SourceVersion as u32 => Ok(Self::SourceVersion),
             _ => Err(()),
         }
     }

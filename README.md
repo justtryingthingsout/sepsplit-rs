@@ -6,6 +6,11 @@ A utility to split a SEP firmware into it's various modules, made in Rust.
 2. Run `cargo install --path /path/to/sepsplit-rs/`
 3. Run the executable with `sepsplit-rs`
 
+### Note for Windows
+In order to get the program to compile, you may need to 
+* Install LLVM as shown [here](https://rust-lang.github.io/rust-bindgen/requirements.html#windows)
+* Either comment out or modify line 52 in `lzvn_decode.c` in the lzvn repo to `#define _LZVN_DEBUG_DUMP(...)` if you are using the MSVC compiler.
+
 ## Usage
 `sepsplit-rs /path/to/sep-firmware.bin [output folder]`<br />
 The SEP firmware has to be decrypted and extracted.

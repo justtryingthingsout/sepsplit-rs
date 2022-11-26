@@ -53,12 +53,12 @@ fn calc_size(bytes: &[u8]) -> usize {
     for _ in 0..hdr.ncmds {
         let cmd = cast_struct!(LoadCommand, &bytes[q..]);
         match cmd.cmd.try_into() {
-            Ok(CMD::Segment) => {
+            Ok(Cmd::Segment) => {
                 let seg = cast_struct!(Segment, &bytes[q+LOADCOMMAND_SIZE..]);
                 end = u64::from(seg.fileoff + seg.filesize);
                 if tsize < end { tsize = end; }
             },
-            Ok(CMD::Segment64) => {
+            Ok(Cmd::Segment64) => {
                 let seg = cast_struct!(Segment64, &bytes[q+LOADCOMMAND_SIZE..]);
                 end = seg.fileoff + seg.filesize;
                 if tsize < end { tsize = end; }
@@ -84,14 +84,14 @@ fn fix_data_segment(image: &mut [u8], data: &[u8], dataoff: Option<usize>) -> Re
     for _ in 0..machheader.ncmds {
         let cur_lcmd = cast_struct!(LoadCommand, &image[p..]);
         match cur_lcmd.cmd.try_into() {
-            Ok(CMD::Segment) => {
+            Ok(Cmd::Segment) => {
                 let seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_DATA {
                     let segoff = dataoff.unwrap_or(seg.fileoff as usize);
                     image[range_size(segoff, data.len())].copy_from_slice(data);
                 }
             }
-            Ok(CMD::Segment64) => {
+            Ok(Cmd::Segment64) => {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_DATA {
                     let segoff = dataoff.unwrap_or(seg.fileoff as usize);
@@ -118,11 +118,11 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
     for _ in 0..machheader.ncmds {
         let cur_lcmd = cast_struct!(LoadCommand, &image[p..]);
         match cur_lcmd.cmd.try_into() {
-            Ok(CMD::Segment) => {
+            Ok(Cmd::Segment) => {
                 let seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname != SEG_PAGEZERO && min > u64::from(seg.vmaddr) { min = u64::from(seg.vmaddr); }
             },
-            Ok(CMD::Segment64) => {
+            Ok(Cmd::Segment64) => {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname != SEG_PAGEZERO && min > seg.vmaddr { min = seg.vmaddr; }
             },
@@ -137,7 +137,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
     for _ in 0..machheader.ncmds {
         let cur_lcmd = cast_struct!(LoadCommand, &image[p..]);
         match cur_lcmd.cmd.try_into() {
-            Ok(CMD::Segment) => {
+            Ok(Cmd::Segment) => {
                 let mut seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_LINKEDIT  {
                     delta = u64::from(seg.vmaddr) - min - u64::from(seg.fileoff);
@@ -147,7 +147,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
                 write_struct!(seg, buf);
                 image[range_size(p+LOADCOMMAND_SIZE, buf.len())].copy_from_slice(&buf);
             },
-            Ok(CMD::Segment64) => {
+            Ok(Cmd::Segment64) => {
                 let mut seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_LINKEDIT  { 
                     delta = seg.vmaddr - min - seg.fileoff;
@@ -157,7 +157,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
                 write_struct!(seg, buf);
                 image[range_size(p+LOADCOMMAND_SIZE, buf.len())].copy_from_slice(&buf);
             },
-            Ok(CMD::SymTab) => {
+            Ok(Cmd::SymTab) => {
                 /* what xerub's code did (translated into Rust):
                     let mut seg = cast_struct!(SymTab, &image[p+LOADCOMMAND_SIZE..]);
                     if seg.stroff != 0 { seg.stroff += delta as u32};

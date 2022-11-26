@@ -369,7 +369,7 @@ pub struct SrcVerCmd {
 //type of command in cmd field
 #[repr(u32)]
 #[derive(PartialEq, Eq)]
-pub enum CMD {
+pub enum Cmd {
     Segment = 0x1,
     Segment64 = 0x19,
     SymTab = 0x2,
@@ -413,11 +413,11 @@ impl MachHeader {
 
 
 
-impl TryFrom<u32> for CMD {
+impl TryFrom<u32> for Cmd {
     type Error = (); //either panics or isn't a real error, so () is fine
 
     fn try_from(v: u32) -> Result<Self, Self::Error> {
-        assert!(v & !(1 << 31) & !(1 << 27) <= 0x100, "this is not a cmd, value was {:#x}", v);
+        assert!(v & !(1 << 31) & !(1 << 27) <= 0x100, "this is not a cmd, value was {v:#x}");
         match v { // https://stackoverflow.com/a/57578431
             x if x == Self::Segment       as u32 => Ok(Self::Segment),
             x if x == Self::Segment64     as u32 => Ok(Self::Segment64),

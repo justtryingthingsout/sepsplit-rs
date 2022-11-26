@@ -5,10 +5,14 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    let lzvn_path = env::current_dir().unwrap()
+                    .join("src")
+                    .join("ext")
+                    .join("lzvn");
     cc::Build::new()
-        .file("src/ext/lzvn/lzvn_decode.c")
-        .file("src/ext/lzvn/lzvn_encode.c")
-        .flag("-Wno-unused-function")
+        .file(lzvn_path.join("lzvn_decode.c"))
+        .file(lzvn_path.join("lzvn_encode.c"))
+        .flag_if_supported("-Wno-unused-function")
         .compile("lzvn");
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes

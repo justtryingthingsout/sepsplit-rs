@@ -1,5 +1,8 @@
-use super::*;
-use std::error::Error;
+use std::{
+    error::Error,
+    path::Path,
+    fs
+};
 use test_case::test_case;
 
 //add as many test_case macros as is sepfws in testfws, must be named "sepfw.name.bin"

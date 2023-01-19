@@ -11,7 +11,7 @@ use std::{
     str, 
     path::Path,
     process, 
-    io::{Write, BufWriter, StdoutLock}, 
+    io::{Write, BufWriter}, 
     ffi::c_void,
     fs
 };
@@ -198,7 +198,7 @@ fn restore_file(index: usize, buf: &[u8], path: &Path, tail: &str, data_buf: Opt
 }
 
 //splits the SEP apps from the 64-bit SEP Firmware by reading the structs
-fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWriter<StdoutLock>, ver: u8) -> Result<(), std::io::Error> {
+fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWriter<Box<dyn Write>>, ver: u8) -> Result<(), std::io::Error> {
     writeln!(&mut outbuf, "detected 64 bit SEP")?;
     let hdr = cast_struct_args!(SEPDataHDR64, &kernel[hdr_offset..], (ver, ));
     let mut off = hdr_offset + SEPHDR_SIZE 
@@ -265,7 +265,7 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
 }
 
 //splits the SEP apps from the 32-bit SEP Firmware by reading the structs
-fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufWriter<StdoutLock>) -> Result<(), std::io::Error> {
+fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufWriter<Box<dyn Write>>) -> Result<(), std::io::Error> {
     writeln!(&mut outbuf, "detected 32 bit SEP")?;
 
     //index 0: boot
@@ -447,17 +447,24 @@ fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
 }
 
 
-pub fn sepsplit(filein: &str, outdir: &Path) -> Result<(), std::io::Error> {
+pub fn sepsplit(filein: &str, outdir: &Path, verbose: usize) -> Result<(), std::io::Error> {
     let mut krnl: Vec<u8> = fs::read(filein).unwrap_or_else(|e| panic!("[-] Cannot read kernel, err: {e}"));
     if let Some(newkrnl) = test_krnl(&krnl) {
         krnl = newkrnl;
     }
     let (hdr_offset, ver) = find_off(&krnl);
     
+    
     //fast stdout
     let stdout = std::io::stdout();
     let outlock = stdout.lock();
-    let outbuf = std::io::BufWriter::new(outlock);
+    let outbuf: BufWriter<Box<dyn Write>> = std::io::BufWriter::new(
+        if verbose == 1 {
+            Box::new(outlock)
+        } else {
+            Box::new(std::io::sink())
+        }
+    );
 
     if ver == 1 { //32-bit SEP
         let septype = sep32_structs(&krnl);
@@ -469,12 +476,28 @@ pub fn sepsplit(filein: &str, outdir: &Path) -> Result<(), std::io::Error> {
 
 use core::ffi::{c_char, CStr};
 
+
+/// C1alls the sepsplit function, which is the main logic of the program.
+/// Arguments:
+/// * `filein` - the path to the extracted SEP firmware
+/// * `outdir` - the path to the output directory
+/// Returns:
+/// * 0 on success, 1 on failure
+/// Requirements:
+/// * `filein` must be a valid UTF-8 and a path to a file
+/// * `outdir` must be a valid UTF-8 and a path to a already existing directory
 #[no_mangle]
-pub unsafe extern "C" fn split(filein: *const c_char, outdir: *const c_char) -> isize {
-    let filein = unsafe { CStr::from_ptr(filein) }.to_str().unwrap();
-    let outdir = unsafe { CStr::from_ptr(outdir) }.to_str().unwrap();
+pub unsafe extern "C" fn split(filein: *const c_char, outdir: *const c_char, verbose: usize) -> isize {
+    let filein = match unsafe { CStr::from_ptr(filein) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return 1
+    };
+    let outdir = match unsafe { CStr::from_ptr(outdir) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return 1
+    };
     let outdir = Path::new(outdir);
-    match sepsplit(filein, outdir) {
+    match sepsplit(filein, outdir, verbose) {
         Ok(_) => 0,
         Err(_) => 1
     }

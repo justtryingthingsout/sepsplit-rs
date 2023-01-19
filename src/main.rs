@@ -27,5 +27,5 @@ fn main() -> Result<(), std::io::Error> {
         env::current_dir().unwrap_or_else(|e| panic!("Cannot get current dir: {e}")) //if output dir is specified, use it
     };
     fs::create_dir_all(outdir)?;
-    sepsplit(&argv[0], outdir)
+    sepsplit(&argv[0], outdir, 1)
 }

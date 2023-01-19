@@ -351,12 +351,35 @@ pub struct Segment64 {
 }
 
 #[binrw]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SymTab {
     pub symoff: u32,
     pub nsyms: u32,
     pub stroff: u32,
     pub strsize: u32,
+}
+
+#[binrw]
+#[derive(Debug, Default)]
+pub struct DySymTab {
+    pub ilocalsym: u32,
+    pub nlocalsym: u32,
+    pub iextdefsym: u32,
+    pub nextdefsym: u32,
+    pub iundefsym: u32,
+    pub nundefsym: u32,
+    pub tocoff: u32,
+    pub ntoc: u32,
+    pub modtaboff: u32,
+    pub nmodtab: u32,
+    pub extrefsymoff: u32,
+    pub nextrefsyms: u32,
+    pub indirectsymoff: u32,
+    pub nindirectsyms: u32,
+    pub extreloff: u32,
+    pub nextrel: u32,
+    pub locreloff: u32,
+    pub nlocrel: u32,
 }
 
 #[derive(BinRead)]
@@ -373,6 +396,7 @@ pub enum Cmd {
     Segment = 0x1,
     Segment64 = 0x19,
     SymTab = 0x2,
+    DySymTab = 0xB,
     SourceVersion = 0x2A,
 }
 
@@ -423,6 +447,7 @@ impl TryFrom<u32> for Cmd {
             x if x == Self::Segment64     as u32 => Ok(Self::Segment64),
             x if x == Self::SymTab        as u32 => Ok(Self::SymTab),
             x if x == Self::SourceVersion as u32 => Ok(Self::SourceVersion),
+            x if x == Self::DySymTab      as u32 => Ok(Self::DySymTab),
             _ => Err(()),
         }
     }

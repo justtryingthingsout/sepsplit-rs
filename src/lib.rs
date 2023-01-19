@@ -163,16 +163,18 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
                     
                 this does not work because there aren't even any symbols in the binaries. */
 
-                let seg = SymTab {
-                    stroff: 0,
-                    symoff: 0,
-                    nsyms: 0,
-                    strsize: 0,
-                };
+                let seg = SymTab::default();
                 let mut buf = Vec::new();
                 write_struct!(seg, buf);
                 image[range_size(p+LOADCOMMAND_SIZE, buf.len())].copy_from_slice(&buf);
             },
+            Ok(Cmd::DySymTab) => {
+                // same reasons as above
+                let seg = DySymTab::default();
+                let mut buf = Vec::new();
+                write_struct!(seg, buf);
+                image[range_size(p+LOADCOMMAND_SIZE, buf.len())].copy_from_slice(&buf);
+            }
             _ => ()
         }
         p += cur_lcmd.cmdsize as usize;
@@ -313,7 +315,7 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
         let mut tail;
 
         //dump struct from start of kernel
-        bootout = outdir.join("sepdump-extra_struct");
+        bootout = outdir.join("sepdump-struct.extra");
         filewrite(&bootout, &kernel[range_size(app.phys_text as usize, 0x1000)]);
         writeln!(&mut outbuf, "struct       size 0x1000")?;
         app.phys_text += 0x1000;
@@ -446,7 +448,15 @@ fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-
+/// The main logic of the program.
+/// # Arguments
+/// * `filein` - The input file to read from
+/// * `outdir` - The output directory to write to
+/// * `verbose` - The verbosity level (0 for no output, 1 for normal output)
+/// # Errors
+/// * Input file errors (permissions, not found, etc.)
+/// * Errors while writing to the output directory
+/// * Errors while writing to stdout
 pub fn sepsplit(filein: &str, outdir: &Path, verbose: usize) -> Result<(), std::io::Error> {
     let mut krnl: Vec<u8> = fs::read(filein)?;
     if let Some(newkrnl) = test_krnl(&krnl) {
@@ -477,24 +487,18 @@ pub fn sepsplit(filein: &str, outdir: &Path, verbose: usize) -> Result<(), std::
 use core::ffi::{c_char, CStr};
 
 /// Calls the sepsplit function, which is the main logic of the program.
-/// Arguments:
+/// # Arguments
 /// * `filein` - the path to the extracted SEP firmware
 /// * `outdir` - the path to the output directory
-/// Returns:
+/// # Returns
 /// * 0 on success, 1 on failure
-/// Requirements:
+/// # Safety
 /// * `filein` must be a valid UTF-8 and a path to a file
 /// * `outdir` must be a valid UTF-8 and a path to a already existing directory
 #[no_mangle]
 pub unsafe extern "C" fn split(filein: *const c_char, outdir: *const c_char, verbose: usize) -> isize {
-    let filein = match unsafe { CStr::from_ptr(filein) }.to_str() {
-        Ok(s) => s,
-        Err(_) => return 1
-    };
-    let outdir = match unsafe { CStr::from_ptr(outdir) }.to_str() {
-        Ok(s) => s,
-        Err(_) => return 1
-    };
+    let Ok(filein) = unsafe { CStr::from_ptr(filein) }.to_str() else { return 1 };
+    let Ok(outdir) = unsafe { CStr::from_ptr(outdir) }.to_str() else { return 1 };
     let outdir = Path::new(outdir);
     match sepsplit(filein, outdir, verbose) {
         Ok(_) => 0,

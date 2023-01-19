@@ -12,8 +12,14 @@ In order to get the program to compile, you may need to
 * Either comment out or modify line 52 in `lzvn_decode.c` in the lzvn repo to `#define _LZVN_DEBUG_DUMP(...)` if you are using the MSVC compiler.
 
 ## Usage
+### As a binary
 `sepsplit-rs /path/to/sep-firmware.bin [output folder]`<br />
 The SEP firmware has to be decrypted and extracted.
+
+### As a library
+1. Use `./src/seplib.h` as the header for importing the function. <br />
+2. Compile a static library with `cargo rustc --lib --crate-type staticlib`.<br />
+3. Finally, run the main logic of the program with `split(const char* filein, const char* outdir, unsigned int verbose)`, replacing the parameters with arguments with the necessary safety requirements listed in the header.
 
 ## Testing
 1. `cd` into the project

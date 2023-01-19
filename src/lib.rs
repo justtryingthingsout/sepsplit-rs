@@ -486,15 +486,17 @@ pub fn sepsplit(filein: &str, outdir: &Path, verbose: usize) -> Result<(), std::
 
 use core::ffi::{c_char, CStr};
 
-/// Calls the sepsplit function, which is the main logic of the program.
+/// Calls the main logic of the program with FFI.
 /// # Arguments
 /// * `filein` - the path to the extracted SEP firmware
 /// * `outdir` - the path to the output directory
+/// * `verbose` - the verbosity level (0 for no output, 1 for normal output)
 /// # Returns
-/// * 0 on success, 1 on failure
+/// * 0 on success
+/// * 1 on failure
 /// # Safety
-/// * `filein` must be a valid UTF-8 and a path to a file
-/// * `outdir` must be a valid UTF-8 and a path to a already existing directory
+/// * `filein` must be a null terminated char array with valid UTF-8 characters and also be a path to a file
+/// * `outdir` must be a null terminated char array with valid UTF-8 characters and also be a path to a already existing directory
 #[no_mangle]
 pub unsafe extern "C" fn split(filein: *const c_char, outdir: *const c_char, verbose: usize) -> isize {
     let Ok(filein) = unsafe { CStr::from_ptr(filein) }.to_str() else { return 1 };

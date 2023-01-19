@@ -448,7 +448,7 @@ fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
 
 
 pub fn sepsplit(filein: &str, outdir: &Path, verbose: usize) -> Result<(), std::io::Error> {
-    let mut krnl: Vec<u8> = fs::read(filein).unwrap_or_else(|e| panic!("[-] Cannot read kernel, err: {e}"));
+    let mut krnl: Vec<u8> = fs::read(filein)?;
     if let Some(newkrnl) = test_krnl(&krnl) {
         krnl = newkrnl;
     }
@@ -476,8 +476,7 @@ pub fn sepsplit(filein: &str, outdir: &Path, verbose: usize) -> Result<(), std::
 
 use core::ffi::{c_char, CStr};
 
-
-/// C1alls the sepsplit function, which is the main logic of the program.
+/// Calls the sepsplit function, which is the main logic of the program.
 /// Arguments:
 /// * `filein` - the path to the extracted SEP firmware
 /// * `outdir` - the path to the output directory

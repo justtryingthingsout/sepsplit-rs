@@ -118,11 +118,15 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
         match cur_lcmd.cmd.try_into() {
             Ok(Cmd::Segment) => {
                 let seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
-                if seg.segname != SEG_PAGEZERO && min > u64::from(seg.vmaddr) { min = u64::from(seg.vmaddr); }
+                if seg.segname != SEG_PAGEZERO && min > u64::from(seg.vmaddr) { 
+                    min = u64::from(seg.vmaddr); 
+                }
             },
             Ok(Cmd::Segment64) => {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
-                if seg.segname != SEG_PAGEZERO && min > seg.vmaddr { min = seg.vmaddr; }
+                if seg.segname != SEG_PAGEZERO && min > seg.vmaddr { 
+                    min = seg.vmaddr; 
+                }
             },
             _ => ()
         }

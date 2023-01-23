@@ -135,13 +135,13 @@ use srcver::SrcVer;
 #[derive(BinRead, Debug)]
 pub struct SEPMonitorBootArgs {
     //monitor related
-    pub version: u32,
-    pub virt_base: u32,
-    pub phys_base: u32,
-    pub mem_size: u32,
+    pub version: u32,   // Version of the monitor boot args
+    pub virt_base: u32, // Virtual base address of the monitor
+    pub phys_base: u32, // Physical base address of the monitor
+    pub mem_size: u32,  // Size of the monitor's memory
     //kernel related
     pub args_off: u32, // offset to SEPKernBootArgs struct
-    pub entry: u32,
+    pub entry: u32,    // entry point/main function of the kernel (duplicated in SEPOS app info)
     /* headers say:
         pub kphys_base: u32,
         pub phys_slide: u32,
@@ -184,7 +184,7 @@ pub enum BootArgsType { //describes space between first fields and name
     //is 69 because it uses the 64-bit struct anyways, first fields are different (just a random value, not the actual size)
     A9      = 24, //major 16xx
     A8      = 20, //major 12xx
-    //A8Old   = 12, //major 8xx
+  //A8Old   = 12, //major 8xx
     A10Old  = 12, //major 6xx
     OldFW   = 0,  //no version field, uses SEPAppOld struct
 }
@@ -192,57 +192,57 @@ pub enum BootArgsType { //describes space between first fields and name
 #[derive(BinRead, Debug)]
 #[br(import(ver: u8))]
 pub struct SEPDataHDR64 {
-    pub kernel_uuid: [u8; 16],
-    pub kernel_heap_size: u64,
-    pub kernel_base_paddr: u64,
-    pub kernel_max_paddr: u64,
-    pub app_images_base_paddr: u64,
-    pub app_images_max_paddr: u64,
-    pub paddr_max: u64, /* size of SEP firmware image */
-    pub tz0_min_size: u64,
-    pub tz1_min_size: u64,
-    pub ar_min_size: u64,
+    pub kernel_uuid: [u8; 16],      // The UUID of the kernel
+    pub kernel_heap_size: u64,      // The size of the kernel's heap
+    pub kernel_base_paddr: u64,     // The address of the kernel in the firmware
+    pub kernel_max_paddr: u64,      // The maximum address of the kernel in the firmware
+    pub app_images_base_paddr: u64, // The address of the apps in the firmware
+    pub app_images_max_paddr: u64,  // The maximum address of the apps in the firmware
+    pub paddr_max: u64,             // The size of the SEP firmware image
+    pub tz0_min_size: u64,          // The minimum size of the TZ0 region
+    pub tz1_min_size: u64,          // The minimum size of the TZ1 region
+    pub ar_min_size: u64,           // The minimum size of the Anti Replay region
     //these do not exist in SEP < 1800
     #[br(if(ar_min_size != 0 || ver == 4, 0))]
-    pub non_ar_min_size: u64,
+    pub non_ar_min_size: u64,       // The minimum size of the non-Anti Replay region
     #[br(if(ar_min_size != 0 || ver == 4, 0))]
-    pub shm_base: u64,
+    pub shm_base: u64,              // The base address of the shared memory region
     #[br(if(ar_min_size != 0 || ver == 4, 0))]
-    pub shm_size: u64,
-    //rootserver start
-        pub init_base_paddr: u64,
-        pub init_base_vaddr: u64,
-        pub init_vsize: u64,
-        pub init_ventry: u64,
-        pub stack_base_paddr: u64,
-        pub stack_base_vaddr: u64,
-        pub stack_size: u64,
+    pub shm_size: u64,              // The size of the shared memory region
+    //rootserver (SEPOS) info start
+        pub init_base_paddr: u64,   // The physical address of SEPOS
+        pub init_base_vaddr: u64,   // The virtual address of SEPOS
+        pub init_vsize: u64,        // The initial virtual size of SEPOS
+        pub init_ventry: u64,       // The entry/main function of SEPOS (from Mach-O start)
+        pub stack_base_paddr: u64,  // The physical address of the SEPOS stack
+        pub stack_base_vaddr: u64,  // The virtual address of the SEPOS stack
+        pub stack_size: u64,        // The size of SEPOS's stack
         //these do not exist in iOS 13 SEP
         #[br(if(stack_size != 0 || ver == 4, 0))]
-        pub mem_size: u64,
+        pub mem_size: u64,          // The size of SEPOS's memory
         #[br(if(stack_size != 0 || ver == 4, 0))]
-        pub antireplay_mem_size: u64,
+        pub antireplay_mem_size: u64, // The size of SEPOS's Anti Replay memory
         #[br(if(stack_size != 0 || ver == 4, 0))]
-        pub heap_mem_size: u64,
+        pub heap_mem_size: u64,     // The size of SEPOS's heap
         #[br(if(ver == 4))]
-        pub compact_ver_start: u32,
+        pub compact_ver_start: u32, // The start of the compact version (0xFFFF_FFFF if not versioned)
         #[br(if(ver == 4))]
-        pub compact_ver_end: u32,
+        pub compact_ver_end: u32,   // The end of the compact version
         #[br(if(ver == 4))]
         _unk1: u64,
         #[br(if(ver == 4))]
         _unk2: u64,
         #[br(if(ver == 4))]
         _unk3: u64,
-        pub init_name: [u8; 16],
-        pub init_uuid: [u8; 16],
-        pub srcver: SrcVer,
+        pub init_name: [u8; 16],    // The name of the rootserver (usually SEPOS)
+        pub init_uuid: [u8; 16],    // The UUID of the rootserver
+        pub srcver: SrcVer,         // The source version of the rootserver
     //rootserver end
     pub crc32: u32,
     pub coredump_sup: u8, //actually bool but I don't want a panic in case it deserializes the wrong bytes
     _pad: [u8; 3], //u32 alignment
-    pub n_apps: u32,
-    pub n_shlibs: u32,
+    pub n_apps: u32,      // The number of apps that follow
+    pub n_shlibs: u32,    // The number of shared libraries that follow after the apps
 }
 
 #[derive(BinRead, Debug)]
@@ -250,17 +250,17 @@ pub struct SEPDataHDR64 {
 /* right after the above, from offset 0x11c0 */
 /* newest 32 bit SEPOS also uses this */
 pub struct SEPApp64 {
-    pub phys_text: u64,
-    pub size_text: u64,
-    pub phys_data: u64,
-    pub size_data: u64,
-    pub virt: u64,
-    pub ventry: u64,
-    pub stack_size: u64,
-    pub mem_size: u64,
-    pub non_antireplay_mem_size: u64,
+    pub phys_text: u64, // The address of the app's Mach-O
+    pub size_text: u64, // The size of the app's Mach-O (doesn't include rw segments, e.g. __DATA)
+    pub phys_data: u64, // The address of the app's rw segments
+    pub size_data: u64, // The size of the app's rw segments
+    pub virt: u64,      // The virtual address of the app
+    pub ventry: u64,    // The entry/main function of the app (from Mach-O start)
+    pub stack_size: u64,// The size of the app's stack
+    pub mem_size: u64,  // The size of the app's memory
+    pub non_antireplay_mem_size: u64, // The size of the app's non-Anti Replay memory
     #[br(if(stack_size != 0 || ver == 4, 0))]
-    pub heap_mem_size: u64,
+    pub heap_mem_size: u64, // The size of the app's heap memory
     #[br(if(ver == 4, 0))]
     _unk1: u64,
     #[br(if(ver == 4, 0))]
@@ -269,11 +269,11 @@ pub struct SEPApp64 {
     _unk3: u64,
     #[br(if(ver == 4, 0))]
     _unk4: u64,
-    pub compact_ver_start: u32,
-    pub compact_ver_end: u32,
-    pub app_name: [u8; 16],
-    pub app_uuid: [u8; 16],
-    pub srcver: SrcVer,
+    pub compact_ver_start: u32, // The start of the compact version (0xFFFF_FFFF if not versioned)
+    pub compact_ver_end: u32,   // The end of the compact version
+    pub app_name: [u8; 16],     // The name of the app
+    pub app_uuid: [u8; 16],     // The UUID of the app
+    pub srcver: SrcVer,         // The source version of the app
 }
 
 /* unused struct
@@ -299,12 +299,12 @@ pub struct SEPApp32 {
 #[derive(BinRead, Debug)]
 /* first version of SEPOS bootargs */
 pub struct SEPAppOld {
-    pub phys: u64,
-    pub virt: u32,
-    pub size: u32,
-    pub entry: u32,
-    /* pub name: [u8; 12], */
-    /* char hash[16]; //could also be UUID */
+    pub phys: u64,  // The address of the app's Mach-O
+    pub virt: u32,  // The virtual address of the app
+    pub size: u32,  // The size of the app's Mach-O (includes __DATA)
+    pub entry: u32, // The entry/main function of the app
+    /* pub name: [u8; 12], */ // The name of the app
+    /* char hash[16]; */      // Could also be UUID
 }
 
 

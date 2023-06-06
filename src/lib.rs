@@ -210,11 +210,20 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
     let mut off = hdr_offset + SEPHDR_SIZE 
                     + if ver == 4 { 56 } else if hdr.ar_min_size == 0 { 0 } else { 24 } //see top of utils.rs file
                     - if hdr.stack_size == 0 && ver != 4 { 24 } else { 0 };
+
+    let mut n_apps = hdr.n_apps;
+    let mut n_shlibs = hdr.n_shlibs;
     
+    if hdr.n_apps == 0 { 
+        off += 0x100;
+        n_apps = u32::from_le_bytes(kernel[range_size(hdr_offset+0x210, 4)].try_into().unwrap());
+        n_shlibs = u32::from_le_bytes(kernel[range_size(hdr_offset+0x214, 4)].try_into().unwrap());
+    }
+
     //first part of image, boot
     let bootout = outdir.join("sepdump00_boot");
     filewrite(&bootout, &kernel[..hdr.kernel_base_paddr as usize]);
-    writeln!(&mut outbuf, "boot          size {sz:#x}", sz=hdr.kernel_base_paddr as usize)?;
+    writeln!(&mut outbuf, "boot             size {sz:#x}", sz=hdr.kernel_base_paddr as usize)?;
 
     //second part, kernel
     let mut sz = calc_size(&kernel[hdr.kernel_base_paddr as usize..]);
@@ -225,14 +234,14 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
     } else {
         restore_file(1, &kernel[range_size(hdr.kernel_base_paddr as usize, sz)], outdir, "kernel", None, None);
     }
-    writeln!(&mut outbuf, "kernel        size {sz:#x}, UUID {uuid}")?;
+    writeln!(&mut outbuf, "kernel           size {sz:#x},  UUID {uuid}")?;
 
     //SEPOS aka "rootserver"
     let mut tail = strslice(&hdr.init_name); //get the name of the first image (SEPOS) without spaces;
     uuid = Uuid::from_bytes_le(hdr.init_uuid).hyphenated().to_string();
     sz = calc_size(&kernel[hdr.init_base_paddr as usize..]);
     restore_file(2, &kernel[range_size(hdr.init_base_paddr as usize, sz)], outdir, tail, None, None);
-    writeln!(&mut outbuf, "{tail:-13} size {sz:#x}, UUID {uuid}")?;
+    writeln!(&mut outbuf, "{tail:<16} size {sz:#x}, UUID {uuid}")?;
 
     //the rest of the apps
     let sepappsize = SEPAPP_64_SIZE 
@@ -244,25 +253,25 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
                        }; //similar to reasons as top of utils.rs
     let mut app;
     let mut i = 0;
-    while i < hdr.n_apps as usize {
+    while i < n_apps as usize {
         app = cast_struct_args!(SEPApp64, &kernel[off..], (ver, ));
         tail = strslice(&app.app_name);
         let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
         restore_file(i + 3, &kernel[range_size(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf), None);
         let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
-        writeln!(&mut outbuf, "{tail:-13} phys_text {:#x}, virt {:#x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x},\n              UUID {uuid}",
+        writeln!(&mut outbuf, "{tail:<16} phys_text {:>#8x}, virt {:>#7x}, size_text {:>#8x}, phys_data {:#x}, size_data {:>#7x}, entry {:#x},\n                 UUID {uuid}",
             app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry)?;
         off += sepappsize;
         i += 1;
     }
-    let max = (hdr.n_apps + hdr.n_shlibs) as usize;
+    let max = (n_apps + n_shlibs) as usize;
     while i < max {
         app = cast_struct_args!(SEPApp64, &kernel[off..], (ver, ));
         tail = strslice(&app.app_name);
         let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
         restore_file(i + 3, &kernel[range_size(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf), Some(app.size_text as usize));
         let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
-        writeln!(&mut outbuf, "{tail:-12} phys_text {:#x}, virt {:#x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x},\n             UUID {uuid}",
+        writeln!(&mut outbuf, "{tail:<16} phys_text {:>#8x}, virt {:>#7x}, size_text {:>#8x}, phys_data {:#x}, size_data {:>#7x}, entry {:#x},\n                 UUID {uuid}",
             app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry)?;
         off += sepappsize;
         i += 1;
@@ -423,15 +432,17 @@ fn find_off(krnl: &[u8]) -> (u64, u8) {
 //test that the kernel is valid, find_off will verify other cases
 fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
     if krnl[..2] == [0x30, 0x83] {
-        eprintln!("[!] IMG4 Header detected, please extract the SEP firmware first. Exiting.");
+        eprintln!("[!] IMG4 Header detected, please extract (and decrypt) the SEP firmware first. Exiting.");
         process::exit(1)
-    } else if &krnl[8..16] == b"eGirBwRD" { //LZVN compression
+    } else if &krnl[8..16] == b"eGirBwRD" { //LZVN compression, "DRawBridGe"
         use bindings::lzvn_decode;
         let start = if krnl[range_size(0x10000, 4)] == [0,0,0,0] { 0x20000 } else { 0x10000 };
         let startptr: *const c_void = krnl[start..].as_ptr().cast();
-        let startlen: u64 = (krnl.len() - start) as u64;
+        let startlen = krnl.len() - start;
 
-        let mut destlen = u64::from(u32::from_le_bytes(krnl[range_size(0x18, 4)].try_into().unwrap()));
+        let mut destlen: usize = u32::from_le_bytes(
+            krnl[range_size(0x18, 4)].try_into().unwrap() //infallable, taking slice of 4 bytes ad converting into array wih len 4
+        ).try_into().unwrap();
         let mut destbuf: Vec<u8> = vec![0; destlen as usize];
         let destptr: *mut c_void = destbuf.as_mut_ptr().cast();
 
@@ -439,9 +450,10 @@ fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
             let complen = unsafe { 
                 lzvn_decode(destptr, destlen, startptr, startlen) 
             };
-            assert_ne!(complen, 0, "decompression errored (truncated input?)");
-            if complen < destlen + 1 { //can't do <= because lzvn_decode returns that on truncated out as well
-                destbuf.resize(complen as usize, 0);
+            assert_ne!(complen, 0, "Decompression failed (truncated input?)");
+            if complen == destlen { break; } 
+            else if complen < destlen {
+                destbuf.truncate(complen as usize);
                 break;
             }
             destlen *= 2; //the SEP firmware may have lied to us about the decompressed size

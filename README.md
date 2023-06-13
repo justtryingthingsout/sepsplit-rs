@@ -1,5 +1,5 @@
 # sepsplit-rs
-A utility to split a SEP firmware into it's various modules, made in Rust.
+A utility to split a SEP firmware into its various modules, made in Rust.
 
 ## Building
 1. Install `cargo` if you haven't already, instructions are [here](https://doc.rust-lang.org/cargo/getting-started/installation.html)

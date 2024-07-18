@@ -20,6 +20,7 @@ filenames=(
     Firmware/all_flash/sep-firmware.d21.RELEASE.im4p
     Firmware/all_flash/sep-firmware.j97.RELEASE.im4p
     Firmware/all_flash/sep-firmware.j72b.RELEASE.im4p
+    AssetData/boot/Firmware/all_flash/sep-firmware.d28.RELEASE.im4p
     AssetData/boot/Firmware/all_flash/sep-firmware.n131b.RELEASE.im4p
     AssetData/boot/Firmware/all_flash/sep-firmware.n142b.RELEASE.im4p
 )
@@ -33,6 +34,7 @@ urls=(
     https://updates.cdn-apple.com/2021SpringFCS/fullrestores/071-17718/AD962F87-1645-410A-8BED-659CBB0449EB/iPhone_5.5_P3_14.5_18E199_Restore.ipsw
     http://updates-http.cdn-apple.com/2019FallFCS/fullrestores/091-99503/DCBD0A9C-D986-11E9-BB0A-9520DCDBD6A3/iPad_64bit_TouchID_13.1_17A844_Restore.ipsw
     https://updates.cdn-apple.com/2022SummerSeed/fullrestores/012-26209/175A6A7C-6E52-438A-8326-FC9DFEBB4E20/iPad_64bit_TouchID_ASTC_16.0_20A5303i_Restore.ipsw
+    https://updates.cdn-apple.com/2023SummerSeed/patches/032-94921/A666013C-65CE-4569-9F17-523F14CB4996/com_apple_MobileAsset_SoftwareUpdate/10473dde19d3576f6ad4871d30cd6e7741704772.zip
     https://updates.cdn-apple.com/2021FallSeed/patches/002-12408/BE15E728-BFA4-4C90-800D-FB80F6CA06B9/com_apple_MobileAsset_SoftwareUpdate/efc9a3a046591663cea13eed0cbc551b7d17e85d.zip
     https://updates.cdn-apple.com/2020FallSeed/patches/001-36676/2CDB0C3C-1803-4627-B7CB-660BFD3A756D/com_apple_MobileAsset_SoftwareUpdate/63531acd54d6e802d13a0340e98164deef4ccb29.zip
 )
@@ -46,6 +48,7 @@ outputfns=(
     sepfw.D21.18E199.bin
     sepfw.J97.17A844.bin
     sepfw.J72b.20A5303i.bin
+    sepfw.D28.21A5248v.bin
     sepfw.N131b.19R5559e.bin
     sepfw.N142b.18R5552f.bin
 )
@@ -59,6 +62,7 @@ keys=(
     4d61659d019cc35ed7558dd565974ee823e5b3cacce549201403029f696168b531cf44b6754c848562b62626cd59b4cb
     ed10559a7fbd6b083d18d7250df06a80c094f934a1acf8361bcc793d3d9ab8ed9db10d15c8271cb7d592380fb5a62c92
     9b9ac127b6615af59136ecd02c3f79635ebe7473676cd25b15fde46d0685d2607e48e14816727735f77d7bde4e37f8dd
+    acd4c21dae3f96cd64adf722921e3cce6c1744f23ee0491b8289c8341d9114c25af670c698630b4ac807413eee8702c5
     cb9076b542287eb5f20cd40dd8dc1b471fc06050e221491c61ad3be717efd95a2f4589a3c3bf77ed7a5ce9a8e79c25a9
     668a4ec73c4b8c6f35e57c0815476bf4f593d248c232f16de2d0957cf9641c3c049028e37687939db35dee3766483658
 )

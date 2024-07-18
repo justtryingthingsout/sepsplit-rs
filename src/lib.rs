@@ -9,7 +9,7 @@ use memchr::memmem;
 
 use std::{
     str, 
-    path::Path,
+    path::{Path, PathBuf},
     process, 
     io::{Write, BufWriter}, 
     ffi::c_void,
@@ -50,13 +50,13 @@ fn calc_size(bytes: &[u8]) -> usize {
     //check segments in mach-o file
     for _ in 0..hdr.ncmds {
         let cmd = cast_struct!(LoadCommand, &bytes[q..]);
-        match cmd.cmd.try_into() {
-            Ok(Cmd::Segment) => {
+        match cmd.cmd {
+            Cmd::Segment => {
                 let seg = cast_struct!(Segment, &bytes[q+LOADCOMMAND_SIZE..]);
                 end = u64::from(seg.fileoff + seg.filesize);
                 if tsize < end { tsize = end; }
             },
-            Ok(Cmd::Segment64) => {
+            Cmd::Segment64 => {
                 let seg = cast_struct!(Segment64, &bytes[q+LOADCOMMAND_SIZE..]);
                 end = seg.fileoff + seg.filesize;
                 if tsize < end { tsize = end; }
@@ -81,15 +81,15 @@ fn fix_data_segment(image: &mut [u8], data: &[u8], dataoff: Option<usize>) -> Re
 
     for _ in 0..machheader.ncmds {
         let cur_lcmd = cast_struct!(LoadCommand, &image[p..]);
-        match cur_lcmd.cmd.try_into() {
-            Ok(Cmd::Segment) => {
+        match cur_lcmd.cmd {
+            Cmd::Segment => {
                 let seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_DATA {
                     let segoff = dataoff.unwrap_or(seg.fileoff as usize);
                     image[range_size(segoff, data.len())].copy_from_slice(data);
                 }
             }
-            Ok(Cmd::Segment64) => {
+            Cmd::Segment64 => {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_DATA {
                     let segoff = dataoff.unwrap_or(seg.fileoff as usize);
@@ -115,14 +115,14 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
 
     for _ in 0..machheader.ncmds {
         let cur_lcmd = cast_struct!(LoadCommand, &image[p..]);
-        match cur_lcmd.cmd.try_into() {
-            Ok(Cmd::Segment) => {
+        match cur_lcmd.cmd {
+            Cmd::Segment => {
                 let seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname != SEG_PAGEZERO && min > u64::from(seg.vmaddr) { 
                     min = u64::from(seg.vmaddr); 
                 }
             },
-            Ok(Cmd::Segment64) => {
+            Cmd::Segment64 => {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname != SEG_PAGEZERO && min > seg.vmaddr { 
                     min = seg.vmaddr; 
@@ -138,8 +138,8 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
 
     for _ in 0..machheader.ncmds {
         let cur_lcmd = cast_struct!(LoadCommand, &image[p..]);
-        match cur_lcmd.cmd.try_into() {
-            Ok(Cmd::Segment) => {
+        match cur_lcmd.cmd {
+            Cmd::Segment => {
                 let mut seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_LINKEDIT  {
                     delta = u64::from(seg.vmaddr) - min - u64::from(seg.fileoff);
@@ -149,7 +149,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
                 write_struct!(seg, buf);
                 image[range_size(p+LOADCOMMAND_SIZE, buf.len())].copy_from_slice(&buf);
             },
-            Ok(Cmd::Segment64) => {
+            Cmd::Segment64 => {
                 let mut seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_LINKEDIT  { 
                     delta = seg.vmaddr - min - seg.fileoff;
@@ -159,7 +159,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
                 write_struct!(seg, buf);
                 image[range_size(p+LOADCOMMAND_SIZE, buf.len())].copy_from_slice(&buf);
             },
-            Ok(Cmd::SymTab) => {
+            Cmd::SymTab => {
                 /* what xerub's code did (translated into Rust):
                     let mut seg = cast_struct!(SymTab, &image[p+LOADCOMMAND_SIZE..]);
                     if seg.stroff != 0 { seg.stroff += delta as u32};
@@ -172,7 +172,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
                 write_struct!(seg, buf);
                 image[range_size(p+LOADCOMMAND_SIZE, buf.len())].copy_from_slice(&buf);
             },
-            Ok(Cmd::DySymTab) => {
+            Cmd::DySymTab => {
                 // same reasons as above
                 let seg = DySymTab::default();
                 let mut buf = Vec::new();
@@ -189,7 +189,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
 
 //restores the file's LINKEDIT and optionally DATA segments, and saves using the name
 fn restore_file(index: usize, buf: &[u8], path: &Path, tail: &str, data_buf: Option<&[u8]>, dataoff: Option<usize>) {
-    let file: &Path = &path.join(format!("sepdump{index:02}_{tail}"));
+    let file: PathBuf = path.join(format!("sepdump{index:02}_{tail}"));
     
     let mut tmp = buf.to_owned();
     if let Err(err) = fix_linkedit(&mut tmp) {
@@ -200,7 +200,7 @@ fn restore_file(index: usize, buf: &[u8], path: &Path, tail: &str, data_buf: Opt
             eprintln!("Error in fix_data_segment function: {err}");
         };
     }
-    filewrite(file, &tmp);
+    filewrite(&file, &tmp);
 }
 
 //splits the SEP apps from the 64-bit SEP Firmware by reading the structs
@@ -209,16 +209,15 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
     let hdr = cast_struct_args!(SEPDataHDR64, &kernel[hdr_offset..], (ver, ));
     let mut off = hdr_offset + SEPHDR_SIZE 
                     + if ver == 4 { 56 } else if hdr.ar_min_size == 0 { 0 } else { 24 } //see top of utils.rs file
-                    - if hdr.stack_size == 0 && ver != 4 { 24 } else { 0 };
+                    - if hdr.stack_size == 0 && ver != 4 { 24 } else { 0 }
+                    + if hdr.pad == [0x40, 0x04, 0x00] { 0x100 } else { 0 }; // some kind of magic?
 
     let mut n_apps = hdr.n_apps;
-    let mut n_shlibs = hdr.n_shlibs;
-    
-    if hdr.n_apps == 0 { 
+    let n_shlibs = if hdr.n_apps == 0 { 
         off += 0x100;
         n_apps = u32::from_le_bytes(kernel[range_size(hdr_offset+0x210, 4)].try_into().unwrap());
-        n_shlibs = u32::from_le_bytes(kernel[range_size(hdr_offset+0x214, 4)].try_into().unwrap());
-    }
+        u32::from_le_bytes(kernel[range_size(hdr_offset+0x214, 4)].try_into().unwrap())
+    } else { hdr.n_shlibs };
 
     //first part of image, boot
     let bootout = outdir.join("sepdump00_boot");
@@ -451,6 +450,8 @@ fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
                 lzvn_decode(destptr, destlen, startptr, startlen) 
             };
             assert_ne!(complen, 0, "Decompression failed (truncated input?)");
+
+            #[allow(clippy::comparison_chain)] //this is more confusing
             if complen == destlen { break; } 
             else if complen < destlen {
                 destbuf.truncate(complen as usize);
@@ -519,7 +520,7 @@ pub unsafe extern "C" fn split(filein: *const c_char, outdir: *const c_char, ver
     let Ok(outdir) = unsafe { CStr::from_ptr(outdir) }.to_str() else { return 1 };
     let outdir = Path::new(outdir);
     match sepsplit(filein, outdir, verbose) {
-        Ok(_) => 0,
+        Ok(()) => 0,
         Err(_) => 1
     }
 }

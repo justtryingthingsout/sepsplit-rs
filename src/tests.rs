@@ -11,6 +11,7 @@ use test_case::test_case;
 #[test_case("D11.14A403")]
 #[test_case("D11.15A372")]
 #[test_case("D21.18E199")]
+#[test_case("D28.21A5248v")]
 #[test_case("J72b.20A5303i")]
 #[test_case("J97.17A844")]
 #[test_case("N131b.19R5559e")]
@@ -21,7 +22,7 @@ fn test_fws(fname: &str) -> Result<(), Box<dyn Error>> {
     use assert_cmd::prelude::*;
     use std::process::Command;
 
-    let ref testfwp = Path::new(env!("CARGO_MANIFEST_DIR")).join("testfws");
+    let testfwp = &Path::new(env!("CARGO_MANIFEST_DIR")).join("testfws");
     
     Command::cargo_bin("sepsplit-rs")?
         .arg(testfwp.join(format!("sepfw.{fname}.bin")))

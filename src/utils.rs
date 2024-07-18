@@ -9,6 +9,8 @@
           (iOS 13 SEP)
     If these assumptions are wrong, the code may panic due to the struct fields being off.
 */
+#![allow(dead_code)] // fields kept for documentation
+
 use binrw::{BinRead, binrw};
 
 //utility macros/functions to help make my life easier
@@ -152,19 +154,19 @@ pub struct SEPMonitorBootArgs {
 
 #[derive(BinRead, Debug)]
 pub struct SEPKernBootArgs {
-    _revision: u16,
-    _version: u16,
-    _virt_base: u32,
-    _phys_base: u32,
-    _mem_size: u32,
-    _top_of_kernel_data: u32,
-    _shm_base: u64,
-    _smh_size: u32,
-    _reserved: [u32; 3],
-    _sepos_crc32: u32,
-    _seprom_args_offset: u32,
-    _seprom_phys_offset: u32,
-    _entropy: [u64; 2],
+    revision: u16,
+    version: u16,
+    virt_base: u32,
+    phys_base: u32,
+    mem_size: u32,
+    top_of_kernel_data: u32,
+    shm_base: u64,
+    smh_size: u32,
+    reserved: [u32; 3],
+    sepos_crc32: u32,
+    seprom_args_offset: u32,
+    seprom_phys_offset: u32,
+    entropy: [u64; 2],
     pub num_apps: u32,
     pub num_shlibs: u32,
     _unused: [u8; 232],
@@ -191,6 +193,7 @@ pub enum BootArgsType { //describes space between first fields and name
 
 #[derive(BinRead, Debug)]
 #[br(import(ver: u8))]
+#[non_exhaustive]
 pub struct SEPDataHDR64 {
     pub kernel_uuid: [u8; 16],      // The UUID of the kernel
     pub kernel_heap_size: u64,      // The size of the kernel's heap
@@ -238,9 +241,11 @@ pub struct SEPDataHDR64 {
         pub init_uuid: [u8; 16],    // The UUID of the rootserver
         pub srcver: SrcVer,         // The source version of the rootserver
     //rootserver end
-    pub crc32: u32,
+    pub crc32: u32, // CRC32 of all of the apps after SEPOS
     pub coredump_sup: u8, //actually bool but I don't want a panic in case it deserializes the wrong bytes
-    _pad: [u8; 3], //u32 alignment
+    pub pad: [u8; 3], //u32 alignment
+    #[br(if(pad == [0x40, 0x04, 0x00], [0; 0x100]))]
+    _unk4: [u8; 0x100], // 'set1', 'set2', ...
     pub n_apps: u32,      // The number of apps that follow
     pub n_shlibs: u32,    // The number of shared libraries that follow after the apps
 }
@@ -390,19 +395,19 @@ pub struct SrcVerCmd {
 }
 
 //type of command in cmd field
-#[repr(u32)]
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug, BinRead)]
 pub enum Cmd {
-    Segment = 0x1,
-    Segment64 = 0x19,
-    SymTab = 0x2,
-    DySymTab = 0xB,
-    SourceVersion = 0x2A,
+    #[br(magic = 0x1u32)] Segment,
+    #[br(magic = 0x19u32)] Segment64,
+    #[br(magic = 0x2u32)] SymTab,
+    #[br(magic = 0xBu32)] DySymTab,
+    #[br(magic = 0x2Au32)] SourceVersion,
+    Unknown = 0xFFFF
 }
 
 #[derive(BinRead, Debug)]
 pub struct LoadCommand {
-    pub cmd: u32,
+    pub cmd: Cmd,
     pub cmdsize: u32
 }
 
@@ -433,22 +438,4 @@ pub static KRNLBOOTARGS_SIZE: usize = 312;
 impl MachHeader {
     pub const fn is_macho(&self) -> bool { self.magic & 0xffff_fffe == 0xfeed_face } //bitwise AND with 0x0 ignores 64 bit
     pub const fn is64(&self) -> bool { self.magic & 0x1 == 1 } // would mean 0xfeed_facf
-}
-
-
-
-impl TryFrom<u32> for Cmd {
-    type Error = (); //either panics or isn't a real error, so () is fine
-
-    fn try_from(v: u32) -> Result<Self, Self::Error> {
-        assert!(v & !(1 << 31) & !(1 << 27) <= 0x100, "this is not a cmd, value was {v:#x}");
-        match v { // https://stackoverflow.com/a/57578431
-            x if x == Self::Segment       as u32 => Ok(Self::Segment),
-            x if x == Self::Segment64     as u32 => Ok(Self::Segment64),
-            x if x == Self::SymTab        as u32 => Ok(Self::SymTab),
-            x if x == Self::SourceVersion as u32 => Ok(Self::SourceVersion),
-            x if x == Self::DySymTab      as u32 => Ok(Self::DySymTab),
-            _ => Err(()),
-        }
-    }
 }

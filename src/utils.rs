@@ -210,7 +210,7 @@ pub enum BootArgsType { //describes space between first fields and name
 }
 
 #[derive(BinRead, Debug)]
-#[br(import(ver: u8))]
+#[br(import(ver: u8, is_old: bool))]
 #[non_exhaustive]
 pub struct SEPDataHDR64 {
     pub kernel_uuid: [u8; 16],      // The UUID of the kernel
@@ -257,6 +257,7 @@ pub struct SEPDataHDR64 {
         _unk3: u64,
         pub init_name: [u8; 16],    // The name of the rootserver (usually SEPOS)
         pub init_uuid: [u8; 16],    // The UUID of the rootserver
+        #[br(if(!is_old, SrcVer::from_bytes([0; 8])))] // old subversion 3 SEPOS
         pub srcver: SrcVer,         // The source version of the rootserver
     //rootserver end
     pub crc32: u32, // CRC32 of all of the apps after SEPOS
@@ -269,7 +270,49 @@ pub struct SEPDataHDR64 {
 }
 
 #[derive(BinRead, Debug)]
-#[br(import(ver: u8))]
+// special version for 64-bit SEPOS with subversion 2
+pub struct SEPDataHDR64Ver2 {
+    pub kernel_uuid: [u8; 16],      // The UUID of the kernel
+    pub kernel_base_paddr: u64,     // The address of the kernel in the firmware
+    pub kernel_max_paddr: u64,      // The maximum address of the kernel in the firmware
+    pub unk1: u64,
+    pub unk2: u64,
+    pub unk3: u64,
+    //rootserver (SEPOS) info start
+        pub init_base_paddr: u64,   // The physical address of SEPOS
+        pub init_base_vaddr: u64,   // The virtual address of SEPOS
+        pub init_vsize: u64,        // The initial virtual size of SEPOS
+        pub init_ventry: u64,       // The entry/main function of SEPOS (from Mach-O start)
+        pub stack_base_paddr: u64,  // The physical address of the SEPOS stack
+        pub stack_base_vaddr: u64,  // The virtual address of the SEPOS stack
+        pub stack_size: u64,        // The size of SEPOS's stack
+        pub init_name: [u8; 16],    // The name of the rootserver (usually SEPOS)
+        pub init_uuid: [u8; 16],    // The UUID of the rootserver
+    //rootserver end
+    pub crc32: u32, // CRC32 of all of the apps after SEPOS
+    pub coredump_sup: u8, //actually bool but I don't want a panic in case it deserializes the wrong bytes
+    pub pad: [u8; 3], //u32 alignment
+    pub n_apps: u32,      // The number of apps that follow
+    pub n_shlibs: u32,    // The number of shared libraries that follow after the apps
+}
+
+#[derive(BinRead, Debug)]
+// special version for 64-bit SEPOS with subversion 2
+pub struct SEPApp64Ver2 {
+    pub phys_text: u64, // The address of the app's Mach-O
+    pub virt: u64,      // The virtual address of the app
+    pub size_text: u64, // The size of the app's Mach-O (doesn't include rw segments, e.g. __DATA)
+    pub ventry: u64,    // The entry/main function of the app (from Mach-O start)
+    pub stack_size: u64,// The size of the app's stack
+    pub compact_ver_start: u32, // The start of the compact version (0xFFFF_FFFF if not versioned)
+    pub compact_ver_end: u32,   // The end of the compact version
+    pub unk1: u64,
+    pub app_name: [u8; 16],     // The name of the app
+    pub app_uuid: [u8; 16],     // The UUID of the app
+}
+
+#[derive(BinRead, Debug)]
+#[br(import(ver: u8, isOld: bool))]
 /* right after the above, from offset 0x11c0 */
 /* newest 32 bit SEPOS also uses this */
 pub struct SEPApp64 {
@@ -280,7 +323,9 @@ pub struct SEPApp64 {
     pub virt: u64,      // The virtual address of the app
     pub ventry: u64,    // The entry/main function of the app (from Mach-O start)
     pub stack_size: u64,// The size of the app's stack
+    #[br(if(!isOld, 0))]
     pub mem_size: u64,  // The size of the app's memory
+    #[br(if(!isOld, 0))]
     pub non_antireplay_mem_size: u64, // The size of the app's non-Anti Replay memory
     #[br(if(stack_size != 0 || ver == 4, 0))]
     pub heap_mem_size: u64, // The size of the app's heap memory
@@ -296,6 +341,7 @@ pub struct SEPApp64 {
     pub compact_ver_end: u32,   // The end of the compact version
     pub app_name: [u8; 16],     // The name of the app
     pub app_uuid: [u8; 16],     // The UUID of the app
+    #[br(if(!isOld, SrcVer::from_bytes([0; 8])))]
     pub srcver: SrcVer,         // The source version of the app
 }
 

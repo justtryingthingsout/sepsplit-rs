@@ -222,13 +222,67 @@ fn restore_file(index: usize, buf: &[u8], path: &Path, tail: &str, data_buf: Opt
 }
 
 //splits the SEP apps from the 64-bit SEP Firmware by reading the structs
-fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWriter<Box<dyn Write>>, ver: u8) -> Result<(), std::io::Error> {
+#[allow(clippy::too_many_lines)] // need to refactor this
+fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWriter<Box<dyn Write>>, ver: u8) -> Result<(), std::io::Error> {
     writeln!(&mut outbuf, "detected 64 bit SEP")?;
-    let hdr = cast_struct_args!(SEPDataHDR64, &kernel[hdr_offset..], (ver, ));
-    let mut off = hdr_offset + SEPHDR_SIZE 
+    let is_old = hdr_offset == 0xFFFF;
+    if is_old {
+        hdr_offset = 0x10F8;
+    }
+    if ver == 2 {
+        // much like old 32-bit SEP
+
+        let hdr = cast_struct!(SEPDataHDR64Ver2, &kernel[hdr_offset..]);
+        //index 0: boot
+        let mut bootout = outdir.join("sepdump00_boot");
+        filewrite(&bootout, &kernel[..0x1000]); 
+        writeln!(&mut outbuf, "boot         size 0x1000")?;
+
+        //index 1: kernel
+        //from D20 iOS 11.0 SEP Firmware
+        let st = 0x4000;
+        let mut sz = calc_size(&kernel[st..]); //most SEP fws
+        restore_file(1, &kernel[range_size(st, sz)], outdir, "kernel", None, None);
+
+        writeln!(&mut outbuf, "kernel       size {sz:#x}")?;
+
+        //dump struct
+        bootout = outdir.join("sepdump-struct.extra");
+        filewrite(&bootout, &kernel[range_size(0x1000, 0x400)]);
+        writeln!(&mut outbuf, "struct       size 0x400")?;
+
+        //SEPOS aka "rootserver"
+        let mut tail = strslice(&hdr.init_name); //get the name of the first image (SEPOS) without spaces;
+        let uuid = Uuid::from_bytes_le(hdr.init_uuid).hyphenated().to_string();
+        sz = hdr.init_vsize as usize;
+        restore_file(2, &kernel[range_size(hdr.init_base_paddr as usize, sz)], outdir, tail, None, None);
+        writeln!(&mut outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, entry {:#x},\n             UUID {uuid}",
+                hdr.init_base_paddr, hdr.init_base_vaddr, hdr.init_vsize, hdr.init_ventry)?;
+
+        let n_apps = hdr.n_apps;
+        let shlib = hdr.n_shlibs;
+
+        let mut i = 3;
+        let mut off = 0x1198; // maybe specific to D20 iOS 11.0?
+        let sepappsize = 0x58; // maybe specific to D20 iOS 11.0?
+        let mut app;
+        while i < (n_apps + shlib) as usize {
+            app = cast_struct!(SEPApp64Ver2, &kernel[off..]);
+            tail = strslice(&app.app_name);
+            restore_file(i, &kernel[range_size(app.phys_text as usize, app.size_text as usize)], outdir, tail, None, None);
+            let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
+            writeln!(&mut outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, entry {:#x},\n             UUID {uuid}",
+                app.phys_text, app.virt, app.size_text,app.ventry)?;
+            off += sepappsize;
+            i += 1;
+        }
+        return Ok(());
+    }
+    let hdr = cast_struct_args!(SEPDataHDR64, &kernel[hdr_offset..], (ver, is_old));
+    let mut off = hdr_offset + if is_old { 0xC0 } else { SEPHDR_SIZE 
                     + if ver == 4 { 56 } else if hdr.ar_min_size == 0 { 0 } else { 24 } //see top of utils.rs file
                     - if hdr.stack_size == 0 && ver != 4 { 24 } else { 0 }
-                    + if hdr.pad == [0x40, 0x04, 0x00] { 0x100 } else { 0 }; // some kind of magic?
+                    + if hdr.pad == [0x40, 0x04, 0x00] { 0x100 } else { 0 } }; // some kind of magic?
 
     let mut n_apps = hdr.n_apps;
     let n_shlibs = if hdr.n_apps == 0 { 
@@ -262,6 +316,7 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
 
     //the rest of the apps
     let sepappsize = SEPAPP_64_SIZE 
+                     - if is_old { 24 } else { 0 }
                      - if hdr.srcver.get_major() < 1300 { 8 } else { 0 } 
                      + match hdr.srcver.get_major() {
                         2000.. => 36,
@@ -271,7 +326,7 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
     let mut app;
     let mut i = 0;
     while i < n_apps as usize {
-        app = cast_struct_args!(SEPApp64, &kernel[off..], (ver, ));
+        app = cast_struct_args!(SEPApp64, &kernel[off..], (ver, is_old));
         tail = strslice(&app.app_name);
         let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
         restore_file(i + 3, &kernel[range_size(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf), None);
@@ -283,7 +338,7 @@ fn split64(hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWrite
     }
     let max = (n_apps + n_shlibs) as usize;
     while i < max {
-        app = cast_struct_args!(SEPApp64, &kernel[off..], (ver, ));
+        app = cast_struct_args!(SEPApp64, &kernel[off..], (ver, is_old));
         tail = strslice(&app.app_name);
         let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
         restore_file(i + 3, &kernel[range_size(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf), Some(app.size_text as usize));
@@ -336,7 +391,7 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
         let n_apps = sep_info.sepapps.unwrap();
         let shlib = sep_info.shlibs.unwrap_or(0);
 
-        let mut app = cast_struct_args!(SEPApp64, &kernel[sep_info.sep_app_pos..], (if shlib == 0 { 0 } else { 4 }, ));
+        let mut app = cast_struct_args!(SEPApp64, &kernel[sep_info.sep_app_pos..], (if shlib == 0 { 0 } else { 4 }, false));
         let sepappsize = SEPAPP_64_SIZE + match app.srcver.get_major() {
             2100.. => 36,
             1700.. => 4,
@@ -354,7 +409,7 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
         let mut i = 2;
         while i < n_apps {
             if i != 2 {
-                app = cast_struct_args!(SEPApp64, &kernel[sep_info.sep_app_pos..], (if shlib == 0 { 0 } else { 4 }, ));
+                app = cast_struct_args!(SEPApp64, &kernel[sep_info.sep_app_pos..], (if shlib == 0 { 0 } else { 4 }, false));
             }
             tail = strslice(&app.app_name);
             let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
@@ -369,7 +424,7 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
         if shlib != 0 {
             let max = n_apps + shlib + 2;
             while i < max {
-                app = cast_struct_args!(SEPApp64, &kernel[sep_info.sep_app_pos..], (4, ));
+                app = cast_struct_args!(SEPApp64, &kernel[sep_info.sep_app_pos..], (4, false));
                 tail = strslice(&app.app_name);
                 let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
                 restore_file(i, &kernel[range_size(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf), Some(app.size_text as usize));
@@ -430,7 +485,7 @@ fn find_off(krnl: &[u8]) -> (u64, u8) {
     if &krnl[range_size(0x1004, 16)] == b"Built by legion2" { 
         //iOS 15 and below
         let hdr = cast_struct!(Legion64Old, &krnl[0x1000..]);
-        (u64::from(hdr.structoff), hdr.subversion as u8)
+        (if hdr.structoff != 0 { u64::from(hdr.structoff) } else { 0xFFFF }, hdr.subversion as u8)
     } else if &krnl[range_size(0x103c, 16)] == b"Built by legion2" {
         //iOS 16
         let hdr16 = cast_struct!(Legion64, &krnl[0x1000..]);

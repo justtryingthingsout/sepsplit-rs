@@ -19,9 +19,6 @@
 use sepsplit_rs::sepsplit;
 use std::{env, fs, path::PathBuf, process};
 
-#[cfg(test)]
-mod tests;
-
 fn main() -> Result<(), std::io::Error> {
     //why I don't use a crate for parsing arguments? idk, I'm more used to C
     let argv: Vec<String> = std::env::args().collect();

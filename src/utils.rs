@@ -1,6 +1,6 @@
 /*
     sepsplit-rs - A tool to split SEPOS firmware into its individual modules
-    Copyright (C) 2024 plzdonthaxme
+    Copyright (C) 2024~2026 plzdonthaxme
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,8 +28,7 @@
     If these assumptions are wrong, the code may panic due to the struct fields being off.
 */
 #![allow(dead_code)] // fields kept for documentation
-
-use binrw::{BinRead, binrw};
+use binrw::{BinRead, binread, binrw};
 
 //utility macros/functions to help make my life easier
 
@@ -61,6 +60,24 @@ macro_rules! cast_struct_args {
             )
         )
     }
+}
+
+macro_rules! force_usize {
+    ($e: expr) => {
+        usize::try_from($e).unwrap()
+    };
+}
+
+macro_rules! force_u32 {
+    ($e: expr) => {
+        u32::try_from($e).unwrap()
+    };
+}
+
+macro_rules! force_u8 {
+    ($e: expr) => {
+        u8::try_from($e).unwrap()
+    };
 }
 
 //create a range from the start and size
@@ -209,12 +226,24 @@ pub enum BootArgsType { //describes space between first fields and name
     OldFW   = 0,  //no version field, uses SEPAppOld struct
 }
 
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Debug, Default, Clone, Copy)]
+pub struct DynamicObjects {
+    pub handle: u32,
+    pub sep_off: u32,
+    pub dart_off: u32,
+    pub sep_sz: u32
+}
+
+#[binread]
 #[br(import(ver: u8, is_old: bool))]
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct SEPDataHDR64 {
     pub kernel_uuid: [u8; 16],      // The UUID of the kernel
     pub kernel_heap_size: u64,      // The size of the kernel's heap
+    #[br(if(ver == 4, 0))]
+    pub(crate) unknown1: u64,                  // unknown field in SEPOS-3485 onwards, seems to be 0
+    #[br(if(unknown1 == 0, unknown1))]
     pub kernel_base_paddr: u64,     // The address of the kernel in the firmware
     pub kernel_max_paddr: u64,      // The maximum address of the kernel in the firmware
     pub app_images_base_paddr: u64, // The address of the apps in the firmware
@@ -224,7 +253,7 @@ pub struct SEPDataHDR64 {
     pub tz1_min_size: u64,          // The minimum size of the TZ1 region
     pub ar_min_size: u64,           // The minimum size of the Anti Replay region
     //these do not exist in SEP < 1800
-    #[br(if(ar_min_size != 0 || ver == 4, 0))]
+    #[br(if(ar_min_size != 0 && (ver != 4 || unknown1 != 0), 0))]
     pub non_ar_min_size: u64,       // The minimum size of the non-Anti Replay region
     #[br(if(ar_min_size != 0 || ver == 4, 0))]
     pub shm_base: u64,              // The base address of the shared memory region
@@ -246,15 +275,13 @@ pub struct SEPDataHDR64 {
         #[br(if(stack_size != 0 || ver == 4, 0))]
         pub heap_mem_size: u64,     // The size of SEPOS's heap
         #[br(if(ver == 4))]
-        pub compact_ver_start: u32, // The start of the compact version (0xFFFF_FFFF if not versioned)
+        pub virt_mem_size: u64,     // The size of SEPOS's virtual memory
         #[br(if(ver == 4))]
-        pub compact_ver_end: u32,   // The end of the compact version
+        pub dart_mem_size: u64,     // The size of SEPOS's DART memory
         #[br(if(ver == 4))]
-        _unk1: u64,
-        #[br(if(ver == 4))]
-        _unk2: u64,
-        #[br(if(ver == 4))]
-        _unk3: u64,
+        pub thread_cnt: u64,        // The number of threads
+        #[br(if(ver == 4, 0))]
+        pub cnode_cnt: u64,         // The number of CNodes
         pub init_name: [u8; 16],    // The name of the rootserver (usually SEPOS)
         pub init_uuid: [u8; 16],    // The UUID of the rootserver
         #[br(if(!is_old, SrcVer::from_bytes([0; 8])))] // old subversion 3 SEPOS
@@ -263,8 +290,9 @@ pub struct SEPDataHDR64 {
     pub crc32: u32, // CRC32 of all of the apps after SEPOS
     pub coredump_sup: u8, //actually bool but I don't want a panic in case it deserializes the wrong bytes
     pub pad: [u8; 3], //u32 alignment
-    #[br(if(pad == [0x40, 0x04, 0x00], [0; 0x100]))]
-    _unk4: [u8; 0x100], // 'set1', 'set2', ...
+    #[br(if(pad != [0; 3] || ver == 4, [DynamicObjects::default(); 0x10]))]
+    // kern_non_ar_mem should be replacing coredump_sup and pad, but ignore here as it's not needed
+    pub dyn_objs: [DynamicObjects; 0x10], // 'set1', 'set2', ...
     pub n_apps: u32,      // The number of apps that follow
     pub n_shlibs: u32,    // The number of shared libraries that follow after the apps
 }
@@ -311,8 +339,9 @@ pub struct SEPApp64Ver2 {
     pub app_uuid: [u8; 16],     // The UUID of the app
 }
 
-#[derive(BinRead, Debug)]
+#[binread]
 #[br(import(ver: u8, isOld: bool))]
+#[derive(Debug)]
 /* right after the above, from offset 0x11c0 */
 /* newest 32 bit SEPOS also uses this */
 pub struct SEPApp64 {
@@ -330,13 +359,17 @@ pub struct SEPApp64 {
     #[br(if(stack_size != 0 || ver == 4, 0))]
     pub heap_mem_size: u64, // The size of the app's heap memory
     #[br(if(ver == 4, 0))]
-    _unk1: u64,
+    pub virt_mem_size: u64,     // The size of SEPOS's virtual memory
     #[br(if(ver == 4, 0))]
-    _unk2: u64,
+    pub dart_mem_size: u64,     // The size of SEPOS's DART memory
     #[br(if(ver == 4, 0))]
-    _unk3: u64,
+    pub thread_cnt: u64,        // The number of threads
     #[br(if(ver == 4, 0))]
-    _unk4: u64,
+    pub cnode_cnt: u64,         // The number of CNodes
+    #[br(temp, restore_position)]
+    unk_temp: u64,
+    #[br(if(ver == 4 && unk_temp == 0, 0))]
+    pub unknown1: u64,          // unknown field in SEPOS-3485 onwards, seems to be 0
     pub compact_ver_start: u32, // The start of the compact version (0xFFFF_FFFF if not versioned)
     pub compact_ver_end: u32,   // The end of the compact version
     pub app_name: [u8; 16],     // The name of the app

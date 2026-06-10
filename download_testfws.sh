@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #    sepsplit-rs - A tool to split SEPOS firmware into its individual modules
-#    Copyright (C) 2024 plzdonthaxme
+#    Copyright (C) 2024~2026 plzdonthaxme
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -39,6 +39,10 @@ filenames=(
     AssetData/boot/Firmware/all_flash/sep-firmware.d28.RELEASE.im4p
     AssetData/boot/Firmware/all_flash/sep-firmware.n131b.RELEASE.im4p
     AssetData/boot/Firmware/all_flash/sep-firmware.n142b.RELEASE.im4p
+    Firmware/all_flash/sep-firmware.d84.RELEASE.im4p
+    Firmware/all_flash/sep-firmware.j721.RELEASE.im4p
+    Firmware/all_flash/sep-firmware.d84.RELEASE.im4p
+    Firmware/all_flash/sep-firmware.d38.RELEASE.im4p
 )
 urls=(
     https://updates.cdn-apple.com/2020SpringFCS/fullrestores/061-94645/267947E5-66EE-46E5-BFA4-B92EAB568C6D/iPhone_4.7_12.4.7_16G192_Restore.ipsw
@@ -53,6 +57,10 @@ urls=(
     https://updates.cdn-apple.com/2023SummerSeed/patches/032-94921/A666013C-65CE-4569-9F17-523F14CB4996/com_apple_MobileAsset_SoftwareUpdate/10473dde19d3576f6ad4871d30cd6e7741704772.zip
     https://updates.cdn-apple.com/2021FallSeed/patches/002-12408/BE15E728-BFA4-4C90-800D-FB80F6CA06B9/com_apple_MobileAsset_SoftwareUpdate/efc9a3a046591663cea13eed0cbc551b7d17e85d.zip
     https://updates.cdn-apple.com/2020FallSeed/patches/001-36676/2CDB0C3C-1803-4627-B7CB-660BFD3A756D/com_apple_MobileAsset_SoftwareUpdate/63531acd54d6e802d13a0340e98164deef4ccb29.zip
+    https://updates.cdn-apple.com/2024SpringFCS/fullrestores/052-39219/B85A827B-AA12-4C20-913C-07308BFE40F0/iPhone16,2_17.5_21F79_Restore.ipsw
+    https://updates.cdn-apple.com/2025SpringFCS/fullrestores/082-14227/A9DEA9E3-65DD-4895-8321-F0E0FB7E01BC/iPad_Pro_M4_18.4_22E240_Restore.ipsw
+    https://updates.cdn-apple.com/2026SpringFCS/fullrestores/122-71038/EFF15F72-3D35-4E07-948F-1F1E183F9832/iPhone16,2_26.5_23F77_Restore.ipsw
+    https://updates.cdn-apple.com/2026SpringSeed/fullrestores/122-99378/80E423FF-F734-4355-893B-972F9040F2D0/iPhone15,5_27.0_24A5355q_Restore.ipsw
 )
 outputfns=(
     sepfw.N61.16G192.bin
@@ -67,6 +75,10 @@ outputfns=(
     sepfw.D28.21A5248v.bin
     sepfw.N131b.19R5559e.bin
     sepfw.N142b.18R5552f.bin
+    sepfw.D84.21F79.bin
+    sepfw.J721.22E240.bin
+    sepfw.D84.23F77.bin
+    sepfw.D38.24A5355q.bin
 )
 keys=(
     e506d463ee17ddc8fb89d3c28403a3a1e47acc11e3b512bc9d48fea2964bbde7fd900634fd15d727cc951159e853b1a8
@@ -81,9 +93,17 @@ keys=(
     acd4c21dae3f96cd64adf722921e3cce6c1744f23ee0491b8289c8341d9114c25af670c698630b4ac807413eee8702c5
     cb9076b542287eb5f20cd40dd8dc1b471fc06050e221491c61ad3be717efd95a2f4589a3c3bf77ed7a5ce9a8e79c25a9
     668a4ec73c4b8c6f35e57c0815476bf4f593d248c232f16de2d0957cf9641c3c049028e37687939db35dee3766483658
+    8bbf65d400d137b0eba74d8ed01a7134a628c33bd7d47f06dc0bfb5db4099a811ed6e3b05106d8776441564ccd8c0273
+    7d9e40cad304840c3d71f09ca6aac0fa53e5857b81b59651e4d4071e68c2d89b9e053ab3b5c016c1f73cebfd86fa34d4
+    daa703eba400e035f34cc6c90c619a4aaeede38f2b659bf32d52a57e3c18abb45c9d39bae81ad1a84f8c8a7bd32ad05c
+    fc4c4c25e2720a3ef8c424abb30919a1bdbcdcf50bb92d16b9292704085b5338340e717c957585ff62654ec4e12ce2d0
 )
 
-for i in {0..10}; do
+for i in {0..15}; do
+    if [ -f "${outputfns[$i]}" ]; then
+        echo "Output file ${outputfns[$i]} already exists, skipping..."
+        continue
+    fi
     pzb -g "${filenames[$i]}" "${urls[$i]}"
     img4 -i "$(basename ${filenames[$i]})" -k "${keys[$i]}" -o "${outputfns[$i]}" > /dev/null
     rm "$(basename ${filenames[$i]})"

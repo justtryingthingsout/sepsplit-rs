@@ -1,6 +1,6 @@
 /*
     sepsplit-rs - A tool to split SEPOS firmware into its individual modules
-    Copyright (C) 2024 plzdonthaxme
+    Copyright (C) 2024~2026 plzdonthaxme
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by

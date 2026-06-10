@@ -1,6 +1,6 @@
 /*
     sepsplit-rs - A tool to split SEPOS firmware into its individual modules
-    Copyright (C) 2024 plzdonthaxme
+    Copyright (C) 2024~2026 plzdonthaxme
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -30,8 +30,12 @@ use test_case::test_case;
 #[test_case("D11.15A372")]
 #[test_case("D21.18E199")]
 #[test_case("D28.21A5248v")]
+#[test_case("D38.24A5355q")]
+#[test_case("D84.21F79")]
+#[test_case("D84.23F77")]
 #[test_case("J72b.20A5303i")]
 #[test_case("J97.17A844")]
+#[test_case("J721.22E240")]
 #[test_case("N131b.19R5559e")]
 #[test_case("N142b.18R5552f")]
 #[test_case("N61.16G192")]

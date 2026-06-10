@@ -1,6 +1,6 @@
 /*
     sepsplit-rs - A tool to split SEPOS firmware into its individual modules
-    Copyright (C) 2024 plzdonthaxme
+    Copyright (C) 2024~2026 plzdonthaxme
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,10 +18,6 @@
 
 //clippy config
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
-#![allow(
-    clippy::use_self, //issues with this from nursery
-    clippy::cast_possible_truncation //can't do much about this
-)]
 
 use memchr::memmem;
 
@@ -29,9 +25,9 @@ use std::{
     str, 
     path::{Path, PathBuf},
     process, 
-    io::{Write, BufWriter}, 
-    ffi::c_void,
-    fs
+    io::{Write, BufWriter},
+    fs,
+    cmp::Ordering
 };
 
 #[macro_use]
@@ -39,6 +35,9 @@ mod utils;
 
 #[allow(clippy::wildcard_imports)]
 use utils::*;
+
+mod lzvndec;
+use lzvndec::lzvn_decode;
 
 use binrw::{
     io::Cursor, 
@@ -48,11 +47,6 @@ use binrw::{
 };
 
 use uuid::Uuid;
-
-#[allow(warnings)]
-mod bindings {
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
 
 //calculate the end of the Mach-O file, by seeing the last possible offset of all segments
 fn calc_size(bytes: &[u8]) -> usize { 
@@ -84,7 +78,7 @@ fn calc_size(bytes: &[u8]) -> usize {
         q += cmd.cmdsize as usize;
     }
 
-    tsize as usize
+    force_usize!(tsize)
 }
 
 //main functions
@@ -110,7 +104,7 @@ fn fix_data_segment(image: &mut [u8], data: &[u8], dataoff: Option<usize>) -> Re
             Cmd::Segment64 => {
                 let seg = cast_struct!(Segment64, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_DATA {
-                    let segoff = dataoff.unwrap_or(seg.fileoff as usize);
+                    let segoff = dataoff.unwrap_or_else(|| force_usize!(seg.fileoff));
                     image[range_size(segoff, data.len())].copy_from_slice(data);
                 }
             },
@@ -161,7 +155,7 @@ fn fix_linkedit(image: &mut [u8]) -> Result<(), String> {
                 let mut seg = cast_struct!(Segment, &image[p+LOADCOMMAND_SIZE..]);
                 if seg.segname == SEG_LINKEDIT  {
                     delta = u64::from(seg.vmaddr) - min - u64::from(seg.fileoff);
-                    seg.fileoff += delta as u32;
+                    seg.fileoff += force_u32!(delta);
                 }
                 let mut buf = Vec::new();
                 write_struct!(seg, buf);
@@ -216,7 +210,7 @@ fn restore_file(index: usize, buf: &[u8], path: &Path, tail: &str, data_buf: Opt
     if let Some(data_seg) = data_buf { 
         if let Err(err) = fix_data_segment(&mut tmp, data_seg, dataoff) {
             eprintln!("Error in fix_data_segment function: {err}");
-        };
+        }
     }
     filewrite(&file, &tmp);
 }
@@ -254,8 +248,8 @@ fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufW
         //SEPOS aka "rootserver"
         let mut tail = strslice(&hdr.init_name); //get the name of the first image (SEPOS) without spaces;
         let uuid = Uuid::from_bytes_le(hdr.init_uuid).hyphenated().to_string();
-        sz = hdr.init_vsize as usize;
-        restore_file(2, &kernel[range_size(hdr.init_base_paddr as usize, sz)], outdir, tail, None, None);
+        sz = force_usize!(hdr.init_vsize);
+        restore_file(2, &kernel[range_size(force_usize!(hdr.init_base_paddr), sz)], outdir, tail, None, None);
         writeln!(&mut outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, entry {:#x},\n             UUID {uuid}",
                 hdr.init_base_paddr, hdr.init_base_vaddr, hdr.init_vsize, hdr.init_ventry)?;
 
@@ -269,7 +263,7 @@ fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufW
         while i < (n_apps + shlib) as usize {
             app = cast_struct!(SEPApp64Ver2, &kernel[off..]);
             tail = strslice(&app.app_name);
-            restore_file(i, &kernel[range_size(app.phys_text as usize, app.size_text as usize)], outdir, tail, None, None);
+            restore_file(i, &kernel[range_size(force_usize!(app.phys_text), force_usize!(app.size_text))], outdir, tail, None, None);
             let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
             writeln!(&mut outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, entry {:#x},\n             UUID {uuid}",
                 app.phys_text, app.virt, app.size_text,app.ventry)?;
@@ -279,10 +273,11 @@ fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufW
         return Ok(());
     }
     let hdr = cast_struct_args!(SEPDataHDR64, &kernel[hdr_offset..], (ver, is_old));
+    
     let mut off = hdr_offset + if is_old { 0xC0 } else { SEPHDR_SIZE 
                     + if ver == 4 { 56 } else if hdr.ar_min_size == 0 { 0 } else { 24 } //see top of utils.rs file
                     - if hdr.stack_size == 0 && ver != 4 { 24 } else { 0 }
-                    + if hdr.pad == [0x40, 0x04, 0x00] { 0x100 } else { 0 } }; // some kind of magic?
+                    + if hdr.pad == [0x40, 0x04, 0x00] || ver == 4 { 0x100 } else { 0 } }; // some kind of magic?
 
     let mut n_apps = hdr.n_apps;
     let n_shlibs = if hdr.n_apps == 0 { 
@@ -293,32 +288,33 @@ fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufW
 
     //first part of image, boot
     let bootout = outdir.join("sepdump00_boot");
-    filewrite(&bootout, &kernel[..hdr.kernel_base_paddr as usize]);
-    writeln!(&mut outbuf, "boot             size {sz:#x}", sz=hdr.kernel_base_paddr as usize)?;
+    filewrite(&bootout, &kernel[..force_usize!(hdr.kernel_base_paddr)]);
+    writeln!(&mut outbuf, "boot             size {sz:#x}", sz=hdr.kernel_base_paddr)?;
 
     //second part, kernel
-    let mut sz = calc_size(&kernel[hdr.kernel_base_paddr as usize..]);
+    let mut sz = calc_size(&kernel[force_usize!(hdr.kernel_base_paddr)..]);
     let mut uuid = Uuid::from_bytes_le(hdr.kernel_uuid).hyphenated().to_string();
     if sz == 0 {
-        filewrite(&outdir.join("sepdump01_kernel"), &kernel[hdr.kernel_base_paddr as usize..hdr.kernel_max_paddr as usize]);
-        sz = (hdr.kernel_max_paddr - hdr.kernel_base_paddr) as usize;
+        filewrite(&outdir.join("sepdump01_kernel"), &kernel[force_usize!(hdr.kernel_base_paddr)..force_usize!(hdr.kernel_max_paddr)]);
+        sz = force_usize!(hdr.kernel_max_paddr - hdr.kernel_base_paddr);
     } else {
-        restore_file(1, &kernel[range_size(hdr.kernel_base_paddr as usize, sz)], outdir, "kernel", None, None);
+        restore_file(1, &kernel[range_size(force_usize!(hdr.kernel_base_paddr), sz)], outdir, "kernel", None, None);
     }
-    writeln!(&mut outbuf, "kernel           size {sz:#x},  UUID {uuid}")?;
+    writeln!(&mut outbuf, "kernel           size {sz:#x}, UUID {uuid}")?;
 
     //SEPOS aka "rootserver"
     let mut tail = strslice(&hdr.init_name); //get the name of the first image (SEPOS) without spaces;
     uuid = Uuid::from_bytes_le(hdr.init_uuid).hyphenated().to_string();
-    sz = calc_size(&kernel[hdr.init_base_paddr as usize..]);
-    restore_file(2, &kernel[range_size(hdr.init_base_paddr as usize, sz)], outdir, tail, None, None);
-    writeln!(&mut outbuf, "{tail:<16} size {sz:#x}, UUID {uuid}")?;
+    sz = calc_size(&kernel[force_usize!(hdr.init_base_paddr)..]);
+    restore_file(2, &kernel[range_size(force_usize!(hdr.init_base_paddr), sz)], outdir, tail, None, None);
+    writeln!(&mut outbuf, "{tail:<16} size {sz:#x}, UUID {uuid}, ver {}", hdr.srcver)?;
 
     //the rest of the apps
     let sepappsize = SEPAPP_64_SIZE 
                      - if is_old { 24 } else { 0 }
                      - if hdr.srcver.get_major() < 1300 { 8 } else { 0 } 
                      + match hdr.srcver.get_major() {
+                        3400.. => 44,
                         2000.. => 36,
                         1700.. => 4,
                         _ => 0
@@ -328,11 +324,11 @@ fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufW
     while i < n_apps as usize {
         app = cast_struct_args!(SEPApp64, &kernel[off..], (ver, is_old));
         tail = strslice(&app.app_name);
-        let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
-        restore_file(i + 3, &kernel[range_size(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf), None);
+        let data_buf = &kernel[range_size(force_usize!(app.phys_data), force_usize!(app.size_data))].to_owned();
+        restore_file(i + 3, &kernel[range_size(force_usize!(app.phys_text), force_usize!(app.size_text + app.size_data))], outdir, tail, Some(data_buf), None);
         let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
-        writeln!(&mut outbuf, "{tail:<16} phys_text {:>#8x}, virt {:>#7x}, size_text {:>#8x}, phys_data {:#x}, size_data {:>#7x}, entry {:#x},\n                 UUID {uuid}",
-            app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry)?;
+        writeln!(&mut outbuf, "{tail:<16} phys_text {:>#8x}, virt {:>#7x}, size_text {:>#8x}, phys_data {:#x}, size_data {:>#7x}, entry {:#x},\n                 UUID {uuid}, ver {}",
+            app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry, app.srcver)?;
         off += sepappsize;
         i += 1;
     }
@@ -340,11 +336,11 @@ fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufW
     while i < max {
         app = cast_struct_args!(SEPApp64, &kernel[off..], (ver, is_old));
         tail = strslice(&app.app_name);
-        let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
-        restore_file(i + 3, &kernel[range_size(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf), Some(app.size_text as usize));
+        let data_buf = &kernel[range_size(force_usize!(app.phys_data), force_usize!(app.size_data))].to_owned();
+        restore_file(i + 3, &kernel[range_size(force_usize!(app.phys_text), force_usize!(app.size_text + app.size_data))], outdir, tail, Some(data_buf), Some(force_usize!(app.size_text)));
         let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
-        writeln!(&mut outbuf, "{tail:<16} phys_text {:>#8x}, virt {:>#7x}, size_text {:>#8x}, phys_data {:#x}, size_data {:>#7x}, entry {:#x},\n                 UUID {uuid}",
-            app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry)?;
+        writeln!(&mut outbuf, "{tail:<16} phys_text {:>#8x}, virt {:>#7x}, size_text {:>#8x}, phys_data {:#x}, size_data {:>#7x}, entry {:#x},\n                 UUID {uuid}, ver {}",
+            app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry, app.srcver)?;
         off += sepappsize;
         i += 1;
     }
@@ -401,7 +397,7 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
 
         //dump struct from start of kernel
         bootout = outdir.join("sepdump-struct.extra");
-        filewrite(&bootout, &kernel[range_size(app.phys_text as usize, 0x1000)]);
+        filewrite(&bootout, &kernel[range_size(force_usize!(app.phys_text), 0x1000)]);
         writeln!(&mut outbuf, "struct       size 0x1000")?;
         app.phys_text += 0x1000;
         app.size_text -= 0x1000;
@@ -412,8 +408,8 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
                 app = cast_struct_args!(SEPApp64, &kernel[sep_info.sep_app_pos..], (if shlib == 0 { 0 } else { 4 }, false));
             }
             tail = strslice(&app.app_name);
-            let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
-            restore_file(i, &kernel[range_size(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf), None);
+            let data_buf = &kernel[range_size(force_usize!(app.phys_data), force_usize!(app.size_data))].to_owned();
+            restore_file(i, &kernel[range_size(force_usize!(app.phys_text), force_usize!(app.size_text + app.size_data))], outdir, tail, Some(data_buf), None);
             let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
             writeln!(&mut outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x},\n             UUID {uuid}",
                 app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry)?;
@@ -426,8 +422,8 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
             while i < max {
                 app = cast_struct_args!(SEPApp64, &kernel[sep_info.sep_app_pos..], (4, false));
                 tail = strslice(&app.app_name);
-                let data_buf = &kernel[range_size(app.phys_data as usize, app.size_data as usize)].to_owned();
-                restore_file(i, &kernel[range_size(app.phys_text as usize, (app.size_text + app.size_data) as usize)], outdir, tail, Some(data_buf), Some(app.size_text as usize));
+                let data_buf = &kernel[range_size(force_usize!(app.phys_data), force_usize!(app.size_data))].to_owned();
+                restore_file(i, &kernel[range_size(force_usize!(app.phys_text), force_usize!(app.size_text + app.size_data))], outdir, tail, Some(data_buf), Some(force_usize!(app.size_text)));
                 let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
                 writeln!(&mut outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, phys_data {:#x}, size_data {:#07x}, entry {:#x},\n             UUID {uuid}",
                     app.phys_text, app.virt, app.size_text, app.phys_data, app.size_data, app.ventry)?;
@@ -451,7 +447,7 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
                 return outbuf.flush() 
             } else if index == 2 { //need SEPOS kernel's offset to dump structs
                 bootout = outdir.join("sepdump-extra_struct");
-                filewrite(&bootout, &kernel[range_size(apps.phys as usize, 0x1000)]); 
+                filewrite(&bootout, &kernel[range_size(force_usize!(apps.phys), 0x1000)]); 
                 writeln!(&mut outbuf, "struct       size 0x1000")?;
                 apps.phys += 0x1000;
                 apps.size -= 0x1000;
@@ -461,7 +457,7 @@ fn split32(kernel: &[u8], outdir: &Path, mut sep_info: SEPinfo, mut outbuf: BufW
             writeln!(&mut outbuf, "{tail:-12} phys {:#08x}, virt {:#x}, size {:#08x}, entry {:#x},\n             UUID {uuid}", 
                       apps.phys,  apps.virt,  apps.size,  apps.entry)?;
             sep_info.sep_app_pos += sep_info.sepapp_size;
-            restore_file(index, &kernel[range_size(apps.phys as usize, apps.size as usize)], outdir, tail, None, None);
+            restore_file(index, &kernel[range_size(force_usize!(apps.phys), apps.size as usize)], outdir, tail, None, None);
         }
     }
     outbuf.flush()
@@ -485,16 +481,16 @@ fn find_off(krnl: &[u8]) -> (u64, u8) {
     if &krnl[range_size(0x1004, 16)] == b"Built by legion2" { 
         //iOS 15 and below
         let hdr = cast_struct!(Legion64Old, &krnl[0x1000..]);
-        (if hdr.structoff != 0 { u64::from(hdr.structoff) } else { 0xFFFF }, hdr.subversion as u8)
+        (if hdr.structoff != 0 { u64::from(hdr.structoff) } else { 0xFFFF }, force_u8!(hdr.subversion))
     } else if &krnl[range_size(0x103c, 16)] == b"Built by legion2" {
         //iOS 16
         let hdr16 = cast_struct!(Legion64, &krnl[0x1000..]);
         let uuid = Uuid::from_bytes_le(hdr16.uuid).hyphenated().to_string();
         println!("HDR UUID: {uuid}");
-        (u64::from(hdr16.structoff), hdr16.subversion as u8)
+        (u64::from(hdr16.structoff), force_u8!(hdr16.subversion))
     } else if &krnl[range_size(0x408, 16)] == b"Built by legion2" {
         let hdr = cast_struct!(Legion32, &krnl[0x400..]);
-        (u64::from(hdr.off), hdr.subversion as u8)
+        (u64::from(hdr.off), force_u8!(hdr.subversion))
     } else {
         eprintln!("[!] Invalid or unknown kernel inputted, exiting.");
         process::exit(1)
@@ -507,31 +503,27 @@ fn test_krnl(krnl: &[u8]) -> Option<Vec<u8>> {
         eprintln!("[!] IMG4 Header detected, please extract (and decrypt) the SEP firmware first. Exiting.");
         process::exit(1)
     } else if &krnl[8..16] == b"eGirBwRD" { //LZVN compression, "DRawBridGe"
-        use bindings::lzvn_decode;
         let start = if krnl[range_size(0x10000, 4)] == [0,0,0,0] { 0x20000 } else { 0x10000 };
-        let startptr: *const c_void = krnl[start..].as_ptr().cast();
-        let startlen = krnl.len() - start;
-
         let mut destlen: usize = u32::from_le_bytes(
             krnl[range_size(0x18, 4)].try_into().unwrap() //infallable, taking slice of 4 bytes ad converting into array wih len 4
         ).try_into().unwrap();
-        let mut destbuf: Vec<u8> = vec![0; destlen as usize];
-        let destptr: *mut c_void = destbuf.as_mut_ptr().cast();
-
+        let mut destbuf: Vec<u8> = vec![0; destlen];
         loop {
-            let complen = unsafe { 
-                lzvn_decode(destptr, destlen, startptr, startlen) 
-            };
+            let complen = lzvn_decode(&mut destbuf, &krnl[start..]);
             assert_ne!(complen, 0, "Decompression failed (truncated input?)");
-
-            #[allow(clippy::comparison_chain)] //this is more confusing
-            if complen == destlen { break; } 
-            else if complen < destlen {
-                destbuf.truncate(complen as usize);
-                break;
+            match complen.cmp(&destlen) {
+                Ordering::Equal => { 
+                    break; 
+                },
+                Ordering::Less => {
+                    destbuf.truncate(complen as usize);
+                    break;
+                },
+                Ordering::Greater => {
+                    destlen *= 2; //the SEP firmware may have lied to us about the decompressed size
+                    destbuf.resize(destlen, 0);
+                },
             }
-            destlen *= 2; //the SEP firmware may have lied to us about the decompressed size
-            destbuf.resize(destlen as usize, 0);
         }
         return Some(destbuf);
     }
@@ -570,7 +562,7 @@ pub fn sepsplit(filein: &str, outdir: &Path, verbose: usize) -> Result<(), std::
         let septype = sep32_structs(&krnl);
         split32(&krnl, outdir, septype, outbuf)
     } else { //64-bit SEP
-        split64(hdr_offset as usize, &krnl, outdir, outbuf, ver)
+        split64(force_usize!(hdr_offset), &krnl, outdir, outbuf, ver)
     }
 }
 

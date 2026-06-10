@@ -16,13 +16,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use std::{
-    fs, 
-    path::PathBuf, 
-    env, 
-    process, 
-};
 use sepsplit_rs::sepsplit;
+use std::{env, fs, path::PathBuf, process};
 
 #[cfg(test)]
 mod tests;
@@ -42,7 +37,8 @@ fn main() -> Result<(), std::io::Error> {
     let outdir = &if arglen > 2 {
         PathBuf::from(&argv[2])
     } else {
-        env::current_dir().unwrap_or_else(|e| panic!("Cannot get current dir: {e}")) //if output dir is specified, use it
+        env::current_dir().unwrap_or_else(|e| panic!("Cannot get current dir: {e}"))
+        //if output dir is specified, use it
     };
     fs::create_dir_all(outdir)?;
     sepsplit(&argv[1], outdir, 1)

@@ -16,11 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use std::{
-    error::Error,
-    path::Path,
-    fs
-};
+use std::{error::Error, fs, path::Path};
 use test_case::test_case;
 
 //add as many test_case macros as is sepfws in testfws, must be named "sepfw.name.bin"
@@ -45,7 +41,7 @@ fn test_fws(fname: &str) -> Result<(), Box<dyn Error>> {
     use std::process::Command;
 
     let testfwp = &Path::new(env!("CARGO_MANIFEST_DIR")).join("testfws");
-    
+
     Command::cargo_bin("sepsplit-rs")?
         .arg(testfwp.join(format!("sepfw.{fname}.bin")))
         .arg(testfwp.join(format!("testout-{fname}/")))
@@ -53,7 +49,7 @@ fn test_fws(fname: &str) -> Result<(), Box<dyn Error>> {
         .success();
 
     assert!(testfwp.join(format!("testout-{fname}/")).exists());
-        
+
     fs::remove_dir_all(testfwp.join(format!("testout-{fname}/")))?; //cleanup
 
     Ok(())

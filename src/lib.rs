@@ -32,8 +32,7 @@ use std::{
 
 #[macro_use]
 mod utils;
-
-#[allow(clippy::wildcard_imports)]
+#[expect(clippy::wildcard_imports)]
 use utils::*;
 
 mod lzvndec;
@@ -216,7 +215,6 @@ fn restore_file(index: usize, buf: &[u8], path: &Path, tail: &str, data_buf: Opt
 }
 
 //splits the SEP apps from the 64-bit SEP Firmware by reading the structs
-#[allow(clippy::too_many_lines)] // need to refactor this
 fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufWriter<Box<dyn Write>>, ver: u8) -> Result<(), std::io::Error> {
     writeln!(&mut outbuf, "detected 64 bit SEP")?;
     let is_old = hdr_offset == 0xFFFF;
@@ -224,53 +222,7 @@ fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufW
         hdr_offset = 0x10F8;
     }
     if ver == 2 {
-        // much like old 32-bit SEP
-
-        let hdr = cast_struct!(SEPDataHDR64Ver2, &kernel[hdr_offset..]);
-        //index 0: boot
-        let mut bootout = outdir.join("sepdump00_boot");
-        filewrite(&bootout, &kernel[..0x1000]); 
-        writeln!(&mut outbuf, "boot         size 0x1000")?;
-
-        //index 1: kernel
-        //from D20 iOS 11.0 SEP Firmware
-        let st = 0x4000;
-        let mut sz = calc_size(&kernel[st..]); //most SEP fws
-        restore_file(1, &kernel[range_size(st, sz)], outdir, "kernel", None, None);
-
-        writeln!(&mut outbuf, "kernel       size {sz:#x}")?;
-
-        //dump struct
-        bootout = outdir.join("sepdump-struct.extra");
-        filewrite(&bootout, &kernel[range_size(0x1000, 0x400)]);
-        writeln!(&mut outbuf, "struct       size 0x400")?;
-
-        //SEPOS aka "rootserver"
-        let mut tail = strslice(&hdr.init_name); //get the name of the first image (SEPOS) without spaces;
-        let uuid = Uuid::from_bytes_le(hdr.init_uuid).hyphenated().to_string();
-        sz = force_usize!(hdr.init_vsize);
-        restore_file(2, &kernel[range_size(force_usize!(hdr.init_base_paddr), sz)], outdir, tail, None, None);
-        writeln!(&mut outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, entry {:#x},\n             UUID {uuid}",
-                hdr.init_base_paddr, hdr.init_base_vaddr, hdr.init_vsize, hdr.init_ventry)?;
-
-        let n_apps = hdr.n_apps;
-        let shlib = hdr.n_shlibs;
-
-        let mut i = 3;
-        let mut off = 0x1198; // maybe specific to D20 iOS 11.0?
-        let sepappsize = 0x58; // maybe specific to D20 iOS 11.0?
-        let mut app;
-        while i < (n_apps + shlib) as usize {
-            app = cast_struct!(SEPApp64Ver2, &kernel[off..]);
-            tail = strslice(&app.app_name);
-            restore_file(i, &kernel[range_size(force_usize!(app.phys_text), force_usize!(app.size_text))], outdir, tail, None, None);
-            let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
-            writeln!(&mut outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, entry {:#x},\n             UUID {uuid}",
-                app.phys_text, app.virt, app.size_text,app.ventry)?;
-            off += sepappsize;
-            i += 1;
-        }
-        return Ok(());
+        split64_ver2(hdr_offset, kernel, outdir, &mut outbuf)?;
     }
     let hdr = cast_struct_args!(SEPDataHDR64, &kernel[hdr_offset..], (ver, is_old));
     
@@ -345,6 +297,55 @@ fn split64(mut hdr_offset: usize, kernel: &[u8], outdir: &Path, mut outbuf: BufW
         i += 1;
     }
     outbuf.flush()
+}
+
+// much like old 32-bit SEP
+fn split64_ver2(hdr_offset: usize, kernel: &[u8], outdir: &Path, outbuf: &mut BufWriter<Box<dyn Write + 'static>>) -> Result<(), std::io::Error> {
+    let hdr = cast_struct!(SEPDataHDR64Ver2, &kernel[hdr_offset..]);
+    //index 0: boot
+    let mut bootout = outdir.join("sepdump00_boot");
+    filewrite(&bootout, &kernel[..0x1000]); 
+    writeln!(outbuf, "boot         size 0x1000")?;
+
+    //index 1: kernel
+    //from D20 iOS 11.0 SEP Firmware
+    let st = 0x4000;
+    let mut sz = calc_size(&kernel[st..]); //most SEP fws
+    restore_file(1, &kernel[range_size(st, sz)], outdir, "kernel", None, None);
+
+    writeln!(outbuf, "kernel       size {sz:#x}")?;
+
+    //dump struct
+    bootout = outdir.join("sepdump-struct.extra");
+    filewrite(&bootout, &kernel[range_size(0x1000, 0x400)]);
+    writeln!(outbuf, "struct       size 0x400")?;
+
+    //SEPOS aka "rootserver"
+    let mut tail = strslice(&hdr.init_name); //get the name of the first image (SEPOS) without spaces;
+    let uuid = Uuid::from_bytes_le(hdr.init_uuid).hyphenated().to_string();
+    sz = force_usize!(hdr.init_vsize);
+    restore_file(2, &kernel[range_size(force_usize!(hdr.init_base_paddr), sz)], outdir, tail, None, None);
+    writeln!(outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, entry {:#x},\n             UUID {uuid}",
+            hdr.init_base_paddr, hdr.init_base_vaddr, hdr.init_vsize, hdr.init_ventry)?;
+
+    let n_apps = hdr.n_apps;
+    let shlib = hdr.n_shlibs;
+
+    let mut i = 3;
+    let mut off = 0x1198; // maybe specific to D20 iOS 11.0?
+    let sepappsize = 0x58; // maybe specific to D20 iOS 11.0?
+    let mut app;
+    while i < (n_apps + shlib) as usize {
+        app = cast_struct!(SEPApp64Ver2, &kernel[off..]);
+        tail = strslice(&app.app_name);
+        restore_file(i, &kernel[range_size(force_usize!(app.phys_text), force_usize!(app.size_text))], outdir, tail, None, None);
+        let uuid = Uuid::from_bytes_le(app.app_uuid).hyphenated().to_string();
+        writeln!(outbuf, "{tail:-12} phys_text {:#08x}, virt {:#06x}, size_text {:#08x}, entry {:#x},\n             UUID {uuid}",
+            app.phys_text, app.virt, app.size_text,app.ventry)?;
+        off += sepappsize;
+        i += 1;
+    }
+    Ok(())
 }
 
 //splits the SEP apps from the 32-bit SEP Firmware by reading the structs
